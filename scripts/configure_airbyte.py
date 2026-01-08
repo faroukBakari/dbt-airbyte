@@ -21,15 +21,16 @@ import sys
 import urllib.request
 import urllib.error
 import base64
+import os
 from typing import Any
 
 # =============================================================================
-# CONFIGURATION (matches copilot-instructions.md)
+# CONFIGURATION (from environment variables with fallbacks)
 # =============================================================================
 
-AIRBYTE_URL = "http://localhost:8000/api/v1"
-AIRBYTE_USERNAME = "airbyte"
-AIRBYTE_PASSWORD = "password"
+AIRBYTE_URL = os.getenv("AIRBYTE_URL", "http://localhost:8000/api/v1")
+AIRBYTE_USERNAME = os.getenv("AIRBYTE_WEB_USER", "airbyte")
+AIRBYTE_PASSWORD = os.getenv("AIRBYTE_WEB_PASSWORD", "password")
 
 # Source/Destination Definition IDs (from Airbyte API inspection)
 FAKER_SOURCE_DEF_ID = "dfd88b22-b603-4c3d-aad7-3701784586b1"
@@ -48,20 +49,21 @@ SOURCE_CONFIG = {
 # Destination configuration (PostgreSQL -> airbyte_raw)
 # NOTE: Use "localhost" because Airbyte connectors run with --network host
 #       where Docker DNS (n8n-postgres) is not available.
-DESTINATION_NAME = "PostgreSQL (airbyte_raw)"
+_airbyte_db_name = os.getenv("AIRBYTE_DB_NAME", "airbyte_raw")
+DESTINATION_NAME = f"PostgreSQL ({_airbyte_db_name})"
 DESTINATION_CONFIG = {
-    "host": "localhost",
-    "port": 5432,
-    "database": "airbyte_raw",
+    "host": os.getenv("POSTGRES_HOST_EXTERNAL", "localhost"),
+    "port": int(os.getenv("POSTGRES_PORT", "5432")),
+    "database": _airbyte_db_name,
     "schema": "public",
-    "username": "airbyte_user",
-    "password": "airbyte_password",
+    "username": os.getenv("AIRBYTE_DB_USER", "airbyte_user"),
+    "password": os.getenv("AIRBYTE_DB_PASSWORD", "airbyte_password"),
     "ssl_mode": {"mode": "disable"},
     "tunnel_method": {"tunnel_method": "NO_TUNNEL"},
 }
 
 # Connection configuration
-CONNECTION_NAME = "Faker → PostgreSQL (airbyte_raw)"
+CONNECTION_NAME = f"Faker → PostgreSQL ({_airbyte_db_name})"
 
 
 # =============================================================================

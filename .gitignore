@@ -1,5 +1,5 @@
 # Python
-__pycache__/
+**/__pycache__
 *.pyc
 *.pyo
 
@@ -10,6 +10,7 @@ dbt_project/logs/
 
 # Environment
 .env
+.env.generated
 *.log
 
 # IDE

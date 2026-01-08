@@ -3,6 +3,9 @@ services:
     image: ghcr.io/dbt-labs/dbt-postgres:1.7.4
     container_name: dbt-runner
     working_dir: /usr/app/dbt
+    env_file:
+      - .env
+      - .env.generated
     volumes:
       - ./dbt_project:/usr/app/dbt
       - ./profiles:/root/.dbt
@@ -14,14 +17,17 @@ services:
     image: apache/airflow:2.8.1-python3.11
     container_name: airflow
     command: standalone
+    env_file:
+      - .env
+      - .env.generated
     environment:
       - AIRFLOW__CORE__LOAD_EXAMPLES=false
       - AIRFLOW__CORE__EXECUTOR=SequentialExecutor
       - AIRFLOW__WEBSERVER__EXPOSE_CONFIG=true
       - _AIRFLOW_DB_MIGRATE=true
       - _AIRFLOW_WWW_USER_CREATE=true
-      - _AIRFLOW_WWW_USER_USERNAME=admin
-      - _AIRFLOW_WWW_USER_PASSWORD=admin
+      - _AIRFLOW_WWW_USER_USERNAME=${AIRFLOW_ADMIN_USER:-admin}
+      - _AIRFLOW_WWW_USER_PASSWORD=${AIRFLOW_ADMIN_PASSWORD:-admin}
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./scripts:/opt/airflow/scripts:ro
@@ -34,4 +40,5 @@ services:
 
 networks:
   n8n-network:
+    name: ${DOCKER_NETWORK:-n8n-network}
     external: true

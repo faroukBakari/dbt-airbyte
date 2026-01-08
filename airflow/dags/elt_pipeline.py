@@ -21,6 +21,11 @@ from airflow.operators.bash import BashOperator
 from airflow.operators.python import PythonOperator, BranchPythonOperator
 from airflow.operators.empty import EmptyOperator
 
+# Environment variables (loaded from .env.generated via docker-compose)
+POSTGRES_CONTAINER = os.getenv('POSTGRES_CONTAINER', 'n8n-postgres')
+POSTGRES_USER = os.getenv('POSTGRES_USER', 'n8n_user')
+AIRBYTE_DB_NAME = os.getenv('AIRBYTE_DB_NAME', 'airbyte_raw')
+
 # Default arguments for all tasks
 default_args = {
     'owner': 'data-team',
@@ -131,10 +136,10 @@ with DAG(
     # ==========================================================================
     seed_raw_data = BashOperator(
         task_id='seed_raw_data',
-        bash_command='docker exec -i n8n-postgres psql -U n8n_user -d airbyte_raw < /opt/airflow/scripts/seed_test_data.sql',
-        doc_md="""
+        bash_command=f'docker exec -i {POSTGRES_CONTAINER} psql -U {POSTGRES_USER} -d {AIRBYTE_DB_NAME} < /opt/airflow/scripts/seed_test_data.sql',
+        doc_md=f"""
         ### Seed Raw Data
-        Loads sample data into `airbyte_raw` database.
+        Loads sample data into `{AIRBYTE_DB_NAME}` database.
         This is the fallback when Airbyte is not configured.
         """,
     )
