@@ -1,29 +1,22 @@
 # Airbyte + dbt POC
 
-Minimalistic Modern Data Stack POC using Airbyte **Sample Data (Faker)** connector, **dbt**, and **Airflow** orchestration with your existing PostgreSQL server.
+Minimalistic Modern Data Stack POC using **Airbyte** (Extract/Load) + **dbt** (Transform) + **Airflow** (Orchestration) with your existing PostgreSQL container.
 
-## 📊 Data Pipeline
+## 📊 Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                        AIRFLOW ORCHESTRATION                            │
-│                         (elt_pipeline DAG)                              │
-└────────┬────────────────────┬────────────────────┬─────────────────────┘
-         │                    │                    │
-         ▼                    ▼                    ▼
-┌─────────────────┐   ┌─────────────────┐   ┌─────────────────┐
-│  1. SEED DATA   │──▶│  2. DBT RUN     │──▶│  3. DBT TEST    │
-│  (Faker → Raw)  │   │  staging→marts  │   │  (validation)   │
-│                 │   │  →gold          │   │                 │
-└────────┬────────┘   └────────┬────────┘   └─────────────────┘
-         │                     │
-         ▼                     ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         POSTGRESQL                                       │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐     │
-│  │ airbyte_raw │  │   staging   │  │    marts    │  │    gold     │     │
-│  │  (raw JSON) │─▶│   (views)   │─▶│  (tables)   │─▶│  (tables)   │     │
-│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘     │
+│                         n8n-network                                     │
+├─────────────────────────────────────────────────────────────────────────┤
+│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐                 │
+│  │ n8n-postgres│◄───│   Airbyte   │    │   Airflow   │                 │
+│  │   :5432     │    │   :8000     │    │   :8080     │                 │
+│  └──────▲──────┘    └─────────────┘    └──────┬──────┘                 │
+│         │                                      │                        │
+│         └──────────────────────────────────────┘                        │
+│  ┌─────────────┐                                                        │
+│  │ dbt-runner  │  staging → marts → gold                               │
+│  └─────────────┘                                                        │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -32,6 +25,8 @@ Minimalistic Modern Data Stack POC using Airbyte **Sample Data (Faker)** connect
 ```
 dbt-airbyte/
 ├── docker-compose.yaml          # dbt + Airflow containers
+├── docker-compose.airbyte.yaml  # Airbyte containers (6 services)
+├── airbyte/                     # Airbyte config files
 ├── airflow/
 │   └── dags/
 │       └── elt_pipeline.py      # Orchestration DAG
@@ -42,98 +37,109 @@ dbt-airbyte/
 │   └── models/
 │       ├── sources.yml          # Airbyte raw data sources
 │       ├── staging/             # Raw → cleaned views
-│       │   ├── stg_users.sql
-│       │   ├── stg_products.sql
-│       │   └── stg_purchases.sql
 │       ├── marts/               # Business dimension tables
-│       │   └── dim_users.sql
 │       └── gold/                # Analytics-ready tables
-│           └── gold_user_purchases.sql
 ├── scripts/
-│   ├── setup.sh                 # One-click setup script
-│   ├── init_databases.sql
-│   ├── init_dbt_analytics_schemas.sql
-│   ├── init_airbyte_raw_permissions.sql
-│   └── seed_test_data.sql
+│   └── setup.sh                 # One-click setup script
 └── README.md
 ```
 
 ## 🚀 Quick Start
 
-### One-Command Setup
+### Full Setup (Default - includes Airbyte)
 
 ```bash
-# Full setup (databases + containers)
 ./scripts/setup.sh
+```
 
-# Setup + load test data
+This will:
+1. ✅ Create databases (`airbyte_raw`, `dbt_analytics`)
+2. ✅ Create users (`airbyte_user`, `dbt_user`)
+3. ✅ Start Airbyte (6 containers)
+4. ✅ Start dbt + Airflow
+
+### Setup without Airbyte
+
+```bash
+./scripts/setup.sh --no-airbyte
+```
+
+### Setup with Seed Data (No Airbyte)
+
+```bash
 ./scripts/setup.sh --seed
+```
 
-# Teardown everything
+Uses pre-loaded test data instead of Airbyte connector.
+
+### Cleanup
+
+```bash
 ./scripts/setup.sh --clean
 ```
 
-### Manual Setup (Alternative)
+---
 
-```bash
-# Create databases and users
-docker exec -i n8n-postgres psql -U postgres -f - < scripts/init_databases.sql
-
-# Create dbt schemas (staging, marts, gold)
-docker exec -i n8n-postgres psql -U postgres -d dbt_analytics -f - < scripts/init_dbt_analytics_schemas.sql
-
-# Set permissions on airbyte_raw database
-docker exec -i n8n-postgres psql -U postgres -d airbyte_raw -f - < scripts/init_airbyte_raw_permissions.sql
-```
-
-### 2. Start Services
-
-```bash
-docker compose up -d
-```
-
-### 3. Access UIs
+## 🌐 Services
 
 | Service | URL | Credentials |
 |---------|-----|-------------|
+| **Airbyte** | http://localhost:8000 | airbyte / password |
 | **Airflow** | http://localhost:8080 | admin / admin |
-| **Airbyte** (optional) | http://localhost:8000 | - |
+| **PostgreSQL** | localhost:5432 | n8n_user |
 
-### 4. Run the Pipeline
+---
 
-**Option A: Via Airflow UI (Recommended)**
-1. Open http://localhost:8080
-2. Find `elt_pipeline` DAG
-3. Toggle ON and click "Trigger DAG"
+## 🔧 Airbyte Configuration (After setup)
 
-**Option B: Via CLI**
-```bash
-# Trigger the DAG
-docker exec airflow airflow dags trigger elt_pipeline
+### Step 1: Create Source → Sample Data (Faker)
 
-# Or run dbt manually
-docker exec dbt-runner dbt run
-docker exec dbt-runner dbt test
+| Field | Value |
+|-------|-------|
+| Count | `100` |
+| Seed | `42` (reproducible) |
+
+### Step 2: Create Destination → PostgreSQL
+
+| Field | Value |
+|-------|-------|
+| Host | `n8n-postgres` |
+| Port | `5432` |
+| Database | `airbyte_raw` |
+| User | `airbyte_user` |
+| Password | `airbyte_password` |
+
+### Step 3: Create Connection
+
+1. Link **Faker source** → **PostgreSQL destination**
+2. Run the first sync
+3. Copy the **Connection ID** from the URL (e.g., `1ab174f8-fa2c-...`)
+
+### Step 4: Configure Airflow Variable
+
+1. Open Airflow UI: http://localhost:8080
+2. Go to **Admin → Variables**
+3. Add new variable:
+   - **Key**: `airbyte_connection_id`
+   - **Value**: `<your-connection-id>`
+
+---
+
+## 🔄 Data Pipeline
+
+```
+┌─────────────────┐      ┌─────────────────┐      ┌─────────────────┐
+│   Airbyte       │      │   dbt           │      │   dbt           │
+│   (OR seed)     │ ───▶ │   staging       │ ───▶ │   marts/gold    │
+│   Raw Data      │      │   (views)       │      │   (tables)      │
+└─────────────────┘      └─────────────────┘      └─────────────────┘
+         │                        │                        │
+         ▼                        ▼                        ▼
+    airbyte_raw          dbt_analytics.staging    dbt_analytics.marts
+    ._airbyte_raw_*      .stg_*                   .dim_*, .gold_*
 ```
 
----
-
-## 🔄 Pipeline Flow
-
-| Step | Task | Description |
-|------|------|-------------|
-| 1 | `seed_raw_data` | Load Faker data into `airbyte_raw` |
-| 2 | `dbt_run_staging` | Transform raw JSON → typed views |
-| 3 | `dbt_run_marts` | Build dimension tables |
-| 4 | `dbt_run_gold` | Create analytics-ready tables |
-| 5 | `dbt_test` | Validate data quality |
-| 6 | `pipeline_complete` | Log success |
-
----
-
-## 🔌 Airbyte Sample Data Connector (Optional)
-
-The POC works with seed data, but you can connect real Airbyte:
+### Data Streams (Faker Connector)
 
 | Stream | Description | Key Fields |
 |--------|-------------|------------|
@@ -141,20 +147,11 @@ The POC works with seed data, but you can connect real Airbyte:
 | `products` | Fake car catalog | id, make, model, year, price |
 | `purchases` | Transactions | id, user_id, product_id, purchased_at |
 
-**Airbyte Destination Config:**
-| Field | Value |
-|-------|-------|
-| Host | `172.17.0.1` (Linux) / `host.docker.internal` (Mac/Win) |
-| Port | `5432` |
-| Database | `airbyte_raw` |
-| Username | `airbyte_user` |
-| Password | `airbyte_password` |
-
 ---
 
 ## 📊 Gold Layer Output
 
-The final `gold.gold_user_purchases` table contains:
+The final `gold.gold_user_purchases` table:
 
 | Column | Description |
 |--------|-------------|
@@ -163,31 +160,33 @@ The final `gold.gold_user_purchases` table contains:
 | email | Email address |
 | total_purchases | Count of purchases |
 | total_spent | Sum of purchase amounts |
-| total_returns | Count of returned items |
 | avg_purchase_value | Average order value |
-| return_rate_pct | Return rate percentage |
 | last_purchased_product | Most recent product bought |
 | refreshed_at | Pipeline run timestamp |
 
 ---
 
-## 🧹 Cleanup
+## 🛠️ Manual Commands
 
 ```bash
-# Stop all containers
-docker compose down
+# dbt commands
+docker exec dbt-runner dbt debug
+docker exec dbt-runner dbt run
+docker exec dbt-runner dbt test
 
-# Drop POC databases
-docker exec -i n8n-postgres psql -U postgres -c "DROP DATABASE IF EXISTS airbyte_raw;"
-docker exec -i n8n-postgres psql -U postgres -c "DROP DATABASE IF EXISTS dbt_analytics;"
-docker exec -i n8n-postgres psql -U postgres -c "DROP USER IF EXISTS dbt_user;"
-docker exec -i n8n-postgres psql -U postgres -c "DROP USER IF EXISTS airbyte_user;"
+# Check service status
+docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+
+# View logs
+docker logs -f airbyte-webapp
+docker logs -f airflow
+docker logs -f dbt-runner
 ```
 
 ---
 
 ## 📚 Resources
 
-- [Airflow Documentation](https://airflow.apache.org/docs/)
+- [Airbyte Sample Data (Faker) Connector](https://docs.airbyte.com/integrations/sources/faker)
 - [dbt Documentation](https://docs.getdbt.com/)
-- [Airbyte Sample Data Connector](https://docs.airbyte.com/integrations/sources/faker)
+- [Airflow Documentation](https://airflow.apache.org/docs/)

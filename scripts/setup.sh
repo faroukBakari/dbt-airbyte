@@ -5,9 +5,10 @@
 # One-click setup for the complete ELT pipeline
 #
 # Usage:
-#   ./scripts/setup.sh          # Full setup
-#   ./scripts/setup.sh --seed   # Setup + load test data
-#   ./scripts/setup.sh --clean  # Teardown everything
+#   ./scripts/setup.sh              # Full setup WITH Airbyte (default)
+#   ./scripts/setup.sh --no-airbyte # Setup without Airbyte
+#   ./scripts/setup.sh --seed       # Setup with test data (no Airbyte)
+#   ./scripts/setup.sh --clean      # Teardown everything
 #
 
 set -e  # Exit on first error
@@ -24,6 +25,8 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 # Service URLs
 AIRFLOW_URL="http://localhost:8080"
 AIRFLOW_HEALTH_URL="http://localhost:8080/health"
+AIRBYTE_URL="http://localhost:8000"
+AIRBYTE_API_URL="http://localhost:8000/api/v1/health"
 
 # Colors for output
 RED='\033[0;31m'
@@ -160,17 +163,23 @@ check_schema_exists() {
 check_url_responding() {
     local url="$1"
     local timeout="${2:-5}"
-    curl --silent --fail --max-time "$timeout" "$url" > /dev/null 2>&1
+    local auth="${3:-}"
+    if [[ -n "$auth" ]]; then
+        curl --silent --fail --max-time "$timeout" -u "$auth" "$url" > /dev/null 2>&1
+    else
+        curl --silent --fail --max-time "$timeout" "$url" > /dev/null 2>&1
+    fi
 }
 
 check_url_with_retry() {
     local url="$1"
     local service_name="$2"
     local max_attempts="${3:-30}"
+    local auth="${4:-}"
     local attempt=1
     
     while [[ $attempt -le $max_attempts ]]; do
-        if check_url_responding "$url" 5; then
+        if check_url_responding "$url" 5 "$auth"; then
             return 0
         fi
         printf "  Waiting for %s... (%d/%d)\r" "$service_name" "$attempt" "$max_attempts"
@@ -310,6 +319,52 @@ start_containers() {
     print_success "Containers started"
 }
 
+start_airbyte() {
+    print_step "Starting Airbyte containers..."
+    
+    cd "$PROJECT_DIR"
+    
+    # Validate docker-compose.airbyte.yaml exists
+    if [[ ! -f "docker-compose.airbyte.yaml" ]]; then
+        abort "docker-compose.airbyte.yaml not found in $PROJECT_DIR"
+    fi
+    
+    # Start Airbyte containers
+    print_info "Running docker compose -f docker-compose.airbyte.yaml up -d..."
+    print_info "This may take 2-5 minutes on first run (downloading images)..."
+    if ! docker compose -f docker-compose.airbyte.yaml up -d 2>&1; then
+        abort "Failed to start Airbyte containers.
+       
+       Check docker-compose.airbyte.yaml syntax:
+         docker compose -f docker-compose.airbyte.yaml config
+       
+       Check for port conflicts:
+         - Airbyte uses port 8000
+         - Ensure no other service is using this port"
+    fi
+    
+    print_success "Airbyte containers started"
+}
+
+wait_for_airbyte() {
+    print_step "Waiting for Airbyte to be ready..."
+    
+    print_info "This may take 2-4 minutes on first run..."
+    
+    # Wait for Airbyte API to respond (with basic auth)
+    # 120 attempts * 2 seconds = 4 minutes max
+    if check_url_with_retry "$AIRBYTE_URL" "Airbyte" 120 "airbyte:password"; then
+        echo ""
+        print_success "Airbyte is responding"
+        return 0
+    fi
+    
+    echo ""
+    print_warning "Airbyte not responding yet"
+    print_info "Check status with: docker logs airbyte-server"
+    return 1
+}
+
 wait_for_airflow() {
     print_step "Waiting for Airflow to be ready..."
     
@@ -405,9 +460,23 @@ seed_test_data() {
 # =============================================================================
 
 check_all_services() {
+    local with_airbyte="${1:-false}"
+    
     print_step "Verifying all services are accessible..."
     
     local all_ok=true
+    
+    # Check Airbyte (if enabled)
+    if [[ "$with_airbyte" == "true" ]]; then
+        print_info "Checking Airbyte UI..."
+        if check_url_responding "$AIRBYTE_URL" 5 "airbyte:password"; then
+            AIRBYTE_STATUS="${GREEN}● ONLINE${NC}"
+        else
+            AIRBYTE_STATUS="${YELLOW}○ STARTING${NC}"
+        fi
+    else
+        AIRBYTE_STATUS="${YELLOW}○ DISABLED${NC}"
+    fi
     
     # Check Airflow UI
     print_info "Checking Airflow UI..."
@@ -448,18 +517,25 @@ check_all_services() {
 }
 
 print_service_urls() {
+    local with_airbyte="${1:-false}"
+    
     echo ""
-    echo "┌────────────────────────────────────────────────────────────────────────┐"
-    echo "│                         SERVICE STATUS                                 │"
-    echo "├────────────────────────────────────────────────────────────────────────┤"
-    printf "│  %-12s  %-8b  %-28s  %-12s │\n" "Service" "Status" "URL" "Credentials"
-    echo "├────────────────────────────────────────────────────────────────────────┤"
-    printf "│  %-12s  %b  %-28s  %-12s │\n" "Airflow" "$AIRFLOW_STATUS" "$AIRFLOW_URL" "admin/admin"
-    printf "│  %-12s  %b  %-28s  %-12s │\n" "PostgreSQL" "$POSTGRES_STATUS" "localhost:5432" "postgres"
-    printf "│  %-12s  %b  %-28s  %-12s │\n" "dbt" "$DBT_STATUS" "(CLI only)" "-"
-    echo "└────────────────────────────────────────────────────────────────────────┘"
+    echo "┌─────────────────────────────────────────────────────────────────────┐"
+    echo "│                        SERVICE STATUS                              │"
+    echo "├─────────────────────────────────────────────────────────────────────┤"
+    printf "│  %-11s %-17s %-26s %-11s│\n" "Service" "Status" "URL" "Credentials"
+    echo "├─────────────────────────────────────────────────────────────────────┤"
+    # Note: Status strings contain ANSI color codes (11 hidden chars), so we use %-28b for 17 visible chars
+    printf "│  %-11s %-28b %-26s %-11s│\n" "Airbyte" "$AIRBYTE_STATUS" "$AIRBYTE_URL" "airbyte/password"
+    printf "│  %-11s %-28b %-26s %-11s│\n" "Airflow" "$AIRFLOW_STATUS" "$AIRFLOW_URL" "admin/admin"
+    printf "│  %-11s %-28b %-26s %-11s│\n" "PostgreSQL" "$POSTGRES_STATUS" "localhost:5432" "n8n_user"
+    printf "│  %-11s %-28b %-26s %-11s│\n" "dbt" "$DBT_STATUS" "(CLI only)" "-"
+    echo "└─────────────────────────────────────────────────────────────────────┘"
     echo ""
     echo "📌 Quick Links:"
+    if [[ "$with_airbyte" == "true" ]]; then
+        echo "   • Airbyte UI:     $AIRBYTE_URL"
+    fi
     echo "   • Airflow UI:     $AIRFLOW_URL"
     echo "   • Airflow DAGs:   $AIRFLOW_URL/dags/elt_pipeline/grid"
     echo ""
@@ -475,6 +551,7 @@ cleanup() {
     print_step "Stopping containers..."
     cd "$PROJECT_DIR"
     docker compose down 2>/dev/null || true
+    docker compose -f docker-compose.airbyte.yaml down -v 2>/dev/null || true
     print_success "Containers stopped"
     
     print_step "Dropping databases..."
@@ -499,6 +576,17 @@ cleanup() {
 # =============================================================================
 
 main() {
+    local with_airbyte=true
+    local with_seed=false
+    
+    # Parse arguments
+    for arg in "$@"; do
+        case "$arg" in
+            --no-airbyte) with_airbyte=false ;;
+            --seed) with_airbyte=false; with_seed=true ;;
+        esac
+    done
+    
     print_header "Airbyte + dbt POC Setup"
     echo ""
     echo "This script will:"
@@ -506,7 +594,9 @@ main() {
     echo "  2. Create isolated databases (airbyte_raw, dbt_analytics)"
     echo "  3. Create dbt schemas (staging, marts, gold)"
     echo "  4. Start containers (dbt-runner, Airflow)"
-    if [[ "$1" == "--seed" ]]; then
+    if [[ "$with_airbyte" == "true" ]]; then
+        echo "  5. Start Airbyte (Sample Data connector)"
+    elif [[ "$with_seed" == "true" ]]; then
         echo "  5. Seed test data (Faker-like sample data)"
     fi
     echo ""
@@ -526,29 +616,47 @@ main() {
     wait_for_dbt
     wait_for_airflow
     
-    # Optional: Seed data
-    if [[ "$1" == "--seed" ]]; then
+    # Start Airbyte if requested
+    if [[ "$with_airbyte" == "true" ]]; then
+        start_airbyte
+        wait_for_airbyte
+    # Or seed test data if requested
+    elif [[ "$with_seed" == "true" ]]; then
         seed_test_data
     fi
     
     # Verify all services and show status
-    check_all_services
+    check_all_services "$with_airbyte"
     
     # Success message
     print_header "SETUP COMPLETE"
     echo ""
     echo -e "${GREEN}Your ELT pipeline is ready!${NC}"
     
-    print_service_urls
+    print_service_urls "$with_airbyte"
     
     echo "🚀 Next steps:"
-    echo "   1. Open Airflow UI: $AIRFLOW_URL"
-    echo "   2. Find 'elt_pipeline' DAG"
-    echo "   3. Toggle ON and click 'Trigger DAG'"
+    if [[ "$with_airbyte" == "true" ]]; then
+        echo "   1. Open Airbyte UI: $AIRBYTE_URL (airbyte/password)"
+        echo "   2. Create Source: 'Sample Data (Faker)' → Count: 100, Seed: 42"
+        echo "   3. Create Destination: 'PostgreSQL'"
+        echo "      • Host: n8n-postgres"
+        echo "      • Port: 5432"
+        echo "      • Database: airbyte_raw"
+        echo "      • User: airbyte_user"
+        echo "      • Password: airbyte_password"
+        echo "   4. Create Connection and run first sync"
+        echo "   5. Open Airflow UI: $AIRFLOW_URL → Trigger 'elt_pipeline' DAG"
+    else
+        echo "   1. Open Airflow UI: $AIRFLOW_URL"
+        echo "   2. Find 'elt_pipeline' DAG"
+        echo "   3. Toggle ON and click 'Trigger DAG'"
+    fi
     echo ""
-    if [[ "$1" != "--seed" ]]; then
-        echo "💡 Tip: Run with --seed to load test data:"
+    if [[ "$with_airbyte" != "true" && "$with_seed" != "true" ]]; then
+        echo "💡 Tip: Run with --seed to load test data, or without flags for full Airbyte:"
         echo "   ./scripts/setup.sh --seed"
+        echo "   ./scripts/setup.sh"
         echo ""
     fi
     echo "🧹 To tear down the POC:"
@@ -564,17 +672,18 @@ case "${1:-}" in
     --clean)
         cleanup
         ;;
-    --seed|"")
-        main "$1"
+    --seed|--no-airbyte|"")
+        main "$@"
         ;;
     --help|-h)
         echo "Usage: $0 [OPTIONS]"
         echo ""
         echo "Options:"
-        echo "  (none)    Full setup without test data"
-        echo "  --seed    Full setup + load test data"
-        echo "  --clean   Tear down all POC resources"
-        echo "  --help    Show this help message"
+        echo "  (none)         Full setup WITH Airbyte (default)"
+        echo "  --no-airbyte   Full setup without Airbyte containers"
+        echo "  --seed         Full setup + test data (no Airbyte)"
+        echo "  --clean        Tear down all POC resources"
+        echo "  --help         Show this help message"
         echo ""
         ;;
     *)

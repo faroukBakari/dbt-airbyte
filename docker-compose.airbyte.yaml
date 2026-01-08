@@ -1,0 +1,207 @@
+# Airbyte Docker Compose (v0.50.5 - Legacy mode for POC)
+# ========================================================
+# This is a simplified Airbyte deployment for local POC use.
+# For production, use abctl (Airbyte's official CLI).
+#
+# Usage:
+#   docker compose -f docker-compose.airbyte.yaml up -d
+#
+# UI: http://localhost:8000
+# Credentials: airbyte / password
+
+x-logging: &default-logging
+  options:
+    max-size: "10m"
+    max-file: "3"
+  driver: json-file
+
+services:
+  # Airbyte Internal Database (metadata only - not for raw data)
+  airbyte-db:
+    image: postgres:13-alpine
+    container_name: airbyte-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: docker
+      POSTGRES_PASSWORD: docker
+      POSTGRES_DB: airbyte
+    volumes:
+      - airbyte_db:/var/lib/postgresql/data
+    networks:
+      - airbyte_internal
+    logging: *default-logging
+
+  # Airbyte Bootloader - Initializes database schema (runs once)
+  airbyte-bootloader:
+    image: airbyte/bootloader:0.50.5
+    container_name: airbyte-bootloader
+    environment:
+      - AIRBYTE_VERSION=0.50.5
+      - DATABASE_USER=docker
+      - DATABASE_PASSWORD=docker
+      - DATABASE_URL=jdbc:postgresql://airbyte-db:5432/airbyte
+      - LOG_LEVEL=INFO
+      - RUN_DATABASE_MIGRATION_ON_STARTUP=true
+    networks:
+      - airbyte_internal
+    depends_on:
+      - airbyte-db
+    logging: *default-logging
+
+  # Temporal - Workflow orchestration
+  airbyte-temporal:
+    image: airbyte/temporal:0.50.5
+    container_name: airbyte-temporal
+    restart: unless-stopped
+    environment:
+      - DB=postgresql
+      - DB_PORT=5432
+      - POSTGRES_USER=docker
+      - POSTGRES_PWD=docker
+      - POSTGRES_SEEDS=airbyte-db
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./airbyte/temporal/dynamicconfig:/etc/temporal/config/dynamicconfig
+    networks:
+      - airbyte_internal
+    depends_on:
+      - airbyte-db
+    logging: *default-logging
+
+  # Airbyte Server - Core API
+  airbyte-server:
+    image: airbyte/server:0.50.5
+    container_name: airbyte-server
+    restart: unless-stopped
+    environment:
+      - AIRBYTE_VERSION=0.50.5
+      - DATABASE_USER=docker
+      - DATABASE_PASSWORD=docker
+      - DATABASE_URL=jdbc:postgresql://airbyte-db:5432/airbyte
+      - CONFIG_ROOT=/data
+      - WORKSPACE_ROOT=/tmp/workspace
+      - TRACKING_STRATEGY=logging
+      - TEMPORAL_HOST=airbyte-temporal:7233
+      - LOG_LEVEL=INFO
+      - JOB_MAIN_CONTAINER_CPU_LIMIT=
+      - JOB_MAIN_CONTAINER_CPU_REQUEST=
+      - JOB_MAIN_CONTAINER_MEMORY_LIMIT=
+      - JOB_MAIN_CONTAINER_MEMORY_REQUEST=
+      - CONFIGS_DATABASE_MINIMUM_FLYWAY_MIGRATION_VERSION=0.40.23.002
+      - JOBS_DATABASE_MINIMUM_FLYWAY_MIGRATION_VERSION=0.40.26.001
+    volumes:
+      - airbyte_workspace:/tmp/workspace
+      - airbyte_data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - airbyte_internal
+      - n8n-network
+    depends_on:
+      airbyte-bootloader:
+        condition: service_completed_successfully
+      airbyte-temporal:
+        condition: service_started
+    logging: *default-logging
+
+  # Airbyte Worker - Runs sync jobs
+  airbyte-worker:
+    image: airbyte/worker:0.50.5
+    container_name: airbyte-worker
+    restart: unless-stopped
+    environment:
+      - AIRBYTE_VERSION=0.50.5
+      - DATABASE_USER=docker
+      - DATABASE_PASSWORD=docker
+      - DATABASE_URL=jdbc:postgresql://airbyte-db:5432/airbyte
+      - CONFIG_ROOT=/data
+      - WORKSPACE_ROOT=/tmp/workspace
+      - WORKSPACE_DOCKER_MOUNT=airbyte_workspace
+      - LOCAL_ROOT=/tmp/airbyte_local
+      - LOCAL_DOCKER_MOUNT=/tmp/airbyte_local
+      - TEMPORAL_HOST=airbyte-temporal:7233
+      - LOG_LEVEL=INFO
+      - SYNC_JOB_MAX_ATTEMPTS=3
+      - SYNC_JOB_MAX_TIMEOUT_DAYS=3
+      - INTERNAL_API_HOST=airbyte-server:8001
+      # Secret management - required for worker startup
+      - SECRET_PERSISTENCE=TESTING_CONFIG_DB_TABLE
+      - MICRONAUT_ENVIRONMENTS=control-plane
+      # Flyway migration versions (required)
+      - CONFIGS_DATABASE_MINIMUM_FLYWAY_MIGRATION_VERSION=0.40.23.002
+      - JOBS_DATABASE_MINIMUM_FLYWAY_MIGRATION_VERSION=0.40.26.001
+    volumes:
+      - airbyte_workspace:/tmp/workspace
+      - airbyte_data:/data
+      - /tmp/airbyte_local:/tmp/airbyte_local
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - airbyte_internal
+      - n8n-network
+    depends_on:
+      airbyte-bootloader:
+        condition: service_completed_successfully
+      airbyte-temporal:
+        condition: service_started
+    logging: *default-logging
+
+  # Airbyte Connector Builder Server - for low-code connectors
+  airbyte-connector-builder-server:
+    image: airbyte/connector-builder-server:0.50.5
+    container_name: airbyte-connector-builder-server
+    restart: unless-stopped
+    environment:
+      - AIRBYTE_VERSION=0.50.5
+    networks:
+      - airbyte_internal
+    depends_on:
+      - airbyte-server
+    logging: *default-logging
+
+  # Airbyte Webapp - UI
+  airbyte-webapp:
+    image: airbyte/webapp:0.50.5
+    container_name: airbyte-webapp
+    restart: unless-stopped
+    environment:
+      - INTERNAL_API_HOST=airbyte-server:8001
+      - CONNECTOR_BUILDER_API_HOST=airbyte-connector-builder-server:80
+      - TRACKING_STRATEGY=logging
+    networks:
+      - airbyte_internal
+    depends_on:
+      - airbyte-server
+      - airbyte-connector-builder-server
+    logging: *default-logging
+
+  # Airbyte Proxy - Auth and routing
+  airbyte-proxy:
+    image: airbyte/proxy:0.50.5
+    container_name: airbyte-proxy
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - BASIC_AUTH_USERNAME=airbyte
+      - BASIC_AUTH_PASSWORD=password
+      - BASIC_AUTH_PROXY_TIMEOUT=900
+    networks:
+      - airbyte_internal
+      - n8n-network
+    depends_on:
+      - airbyte-webapp
+      - airbyte-server
+    logging: *default-logging
+
+volumes:
+  airbyte_db:
+    name: airbyte_db
+  airbyte_workspace:
+    name: airbyte_workspace
+  airbyte_data:
+    name: airbyte_data
+
+networks:
+  airbyte_internal:
+    driver: bridge
+  n8n-network:
+    external: true

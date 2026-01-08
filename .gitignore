@@ -1,3 +1,8 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
 # dbt
 dbt_project/target/
 dbt_project/dbt_packages/

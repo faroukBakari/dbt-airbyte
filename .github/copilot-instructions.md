@@ -20,26 +20,24 @@ Minimalistic POC for a Modern Data Stack using **Airbyte** (EL) + **dbt Core** (
 1. **DO NOT** create a new PostgreSQL container
 2. Create isolated databases: `airbyte_raw` and `dbt_analytics`
 3. Create dedicated users: `airbyte_user` and `dbt_user`
-4. dbt + Airflow containers join `n8n-network` to access existing postgres
+4. dbt + Airflow + Airbyte containers join `n8n-network` to access existing postgres
 5. dbt layers: staging (views) → marts (tables) → gold (tables)
 
 ## Quick Commands
 ```bash
-# 1. Init databases (run once)
-docker exec -i n8n-postgres psql -U n8n_user -d postgres < scripts/init_databases.sql
-docker exec -i n8n-postgres psql -U n8n_user -d dbt_analytics < scripts/init_dbt_analytics_schemas.sql
-docker exec -i n8n-postgres psql -U n8n_user -d airbyte_raw < scripts/init_airbyte_raw_permissions.sql
+# Full setup WITH Airbyte (default)
+./scripts/setup.sh
 
-# 2. Seed test data (optional - skip if using Airbyte)
-docker exec -i n8n-postgres psql -U n8n_user -d airbyte_raw < scripts/seed_test_data.sql
+# Setup without Airbyte
+./scripts/setup.sh --no-airbyte
 
-# 3. Start services (dbt + Airflow)
-docker compose up -d
+# Setup with seed data (no Airbyte)
+./scripts/setup.sh --seed
 
-# 4. Run via Airflow (recommended)
-# Open http://localhost:8080 → Trigger elt_pipeline DAG
+# Cleanup
+./scripts/setup.sh --clean
 
-# 5. Or run dbt manually
+# Manual dbt commands
 docker exec dbt-runner dbt debug
 docker exec dbt-runner dbt run
 docker exec dbt-runner dbt test
@@ -48,20 +46,48 @@ docker exec dbt-runner dbt test
 ## Services
 | Service | URL | Credentials |
 |---------|-----|-------------|
+| Airbyte | http://localhost:8000 | airbyte / password |
 | Airflow | http://localhost:8080 | admin / admin |
-| Airbyte (optional) | http://localhost:8000 | - |
+| PostgreSQL | localhost:5432 | n8n_user |
 
-## Airbyte Source Config (Sample Data)
+## Airbyte Setup (Manual Steps after setup)
+
+### 1. Create Source: Sample Data (Faker)
 | Field | Value |
 |-------|-------|
 | Count | `100` |
 | Seed | `42` (reproducible) |
 
-## Airbyte Destination Config (PostgreSQL)
+### 2. Create Destination: PostgreSQL
 | Field | Value |
 |-------|-------|
-| Host | `172.17.0.1` (Linux) or `host.docker.internal` (Mac/Win) |
+| Host | `n8n-postgres` |
 | Port | `5432` |
 | Database | `airbyte_raw` |
 | User | `airbyte_user` |
 | Password | `airbyte_password` |
+
+### 3. Create Connection
+- Link Faker source → PostgreSQL destination
+- Copy the **Connection ID** from the URL (e.g., `1ab174f8-fa2c-...`)
+
+### 4. Configure Airflow
+- Go to Airflow UI → Admin → Variables
+- Add: `airbyte_connection_id` = `<your-connection-id>`
+
+## Architecture
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         n8n-network                                     │
+├─────────────────────────────────────────────────────────────────────────┤
+│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐                 │
+│  │ n8n-postgres│◄───│   Airbyte   │    │   Airflow   │                 │
+│  │   :5432     │    │   :8000     │    │   :8080     │                 │
+│  └──────▲──────┘    └─────────────┘    └──────┬──────┘                 │
+│         │                                      │                        │
+│         └──────────────────────────────────────┘                        │
+│  ┌─────────────┐                                                        │
+│  │ dbt-runner  │  staging → marts → gold                               │
+│  └─────────────┘                                                        │
+└─────────────────────────────────────────────────────────────────────────┘
+```
