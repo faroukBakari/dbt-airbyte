@@ -1,0 +1,12 @@
+dbt_airbyte_poc:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: n8n-postgres          # Docker service name (same network)
+      port: 5432
+      user: "{{ env_var('DBT_USER', 'dbt_user') }}"
+      password: "{{ env_var('DBT_PASSWORD', 'dbt_password') }}"
+      dbname: dbt_analytics
+      schema: public
+      threads: 2

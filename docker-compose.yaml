@@ -1,0 +1,37 @@
+services:
+  dbt:
+    image: ghcr.io/dbt-labs/dbt-postgres:1.7.4
+    container_name: dbt-runner
+    working_dir: /usr/app/dbt
+    volumes:
+      - ./dbt_project:/usr/app/dbt
+      - ./profiles:/root/.dbt
+    networks:
+      - n8n-network
+    entrypoint: ["tail", "-f", "/dev/null"]  # Keep alive for interactive use
+
+  airflow:
+    image: apache/airflow:2.8.1-python3.11
+    container_name: airflow
+    command: standalone
+    environment:
+      - AIRFLOW__CORE__LOAD_EXAMPLES=false
+      - AIRFLOW__CORE__EXECUTOR=SequentialExecutor
+      - AIRFLOW__WEBSERVER__EXPOSE_CONFIG=true
+      - _AIRFLOW_DB_MIGRATE=true
+      - _AIRFLOW_WWW_USER_CREATE=true
+      - _AIRFLOW_WWW_USER_USERNAME=admin
+      - _AIRFLOW_WWW_USER_PASSWORD=admin
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./scripts:/opt/airflow/scripts:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "8080:8080"
+    networks:
+      - n8n-network
+    user: "${AIRFLOW_UID:-50000}:0"
+
+networks:
+  n8n-network:
+    external: true

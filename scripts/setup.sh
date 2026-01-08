@@ -1,0 +1,585 @@
+#!/bin/bash
+#
+# Airbyte + dbt POC Setup Script
+# ================================
+# One-click setup for the complete ELT pipeline
+#
+# Usage:
+#   ./scripts/setup.sh          # Full setup
+#   ./scripts/setup.sh --seed   # Setup + load test data
+#   ./scripts/setup.sh --clean  # Teardown everything
+#
+
+set -e  # Exit on first error
+
+# =============================================================================
+# CONFIGURATION
+# =============================================================================
+POSTGRES_CONTAINER="n8n-postgres"
+POSTGRES_USER="n8n_user"
+DOCKER_NETWORK="n8n-network"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+
+# Service URLs
+AIRFLOW_URL="http://localhost:8080"
+AIRFLOW_HEALTH_URL="http://localhost:8080/health"
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# =============================================================================
+# HELPER FUNCTIONS
+# =============================================================================
+
+print_header() {
+    echo ""
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${BLUE}  $1${NC}"
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+}
+
+print_step() {
+    echo -e "\n${YELLOW}▶ $1${NC}"
+}
+
+print_success() {
+    echo -e "${GREEN}✓ $1${NC}"
+}
+
+print_error() {
+    echo -e "${RED}✗ ERROR: $1${NC}"
+}
+
+print_info() {
+    echo -e "  $1"
+}
+
+print_warning() {
+    echo -e "${YELLOW}⚠ $1${NC}"
+}
+
+abort() {
+    echo ""
+    print_error "$1"
+    echo ""
+    echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${RED}  SETUP ABORTED${NC}"
+    echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    echo "Troubleshooting tips:"
+    echo "  1. Check if Docker is running: docker info"
+    echo "  2. Check if $POSTGRES_CONTAINER is running: docker ps | grep $POSTGRES_CONTAINER"
+    echo "  3. Check container logs: docker logs $POSTGRES_CONTAINER"
+    echo "  4. Verify network exists: docker network ls | grep $DOCKER_NETWORK"
+    echo ""
+    exit 1
+}
+
+# =============================================================================
+# VALIDATION FUNCTIONS
+# =============================================================================
+
+check_docker() {
+    print_step "Checking Docker availability..."
+    
+    if ! command -v docker &> /dev/null; then
+        abort "Docker is not installed or not in PATH"
+    fi
+    
+    if ! docker info &> /dev/null; then
+        abort "Docker daemon is not running. Please start Docker."
+    fi
+    
+    print_success "Docker is available and running"
+}
+
+check_postgres_container() {
+    print_step "Checking PostgreSQL container ($POSTGRES_CONTAINER)..."
+    
+    if ! docker ps --format '{{.Names}}' | grep -q "^${POSTGRES_CONTAINER}$"; then
+        abort "Container '$POSTGRES_CONTAINER' is not running.
+       
+       Expected: A running PostgreSQL container named '$POSTGRES_CONTAINER'
+       
+       To fix:
+         - Start your existing n8n stack, OR
+         - Create the container manually:
+           docker run -d --name $POSTGRES_CONTAINER \\
+             -e POSTGRES_PASSWORD=password \\
+             -p 5432:5432 \\
+             --network $DOCKER_NETWORK \\
+             postgres:16-alpine"
+    fi
+    
+    # Check if postgres is accepting connections
+    if ! docker exec "$POSTGRES_CONTAINER" pg_isready -U "$POSTGRES_USER" &> /dev/null; then
+        abort "PostgreSQL in '$POSTGRES_CONTAINER' is not ready to accept connections.
+       
+       The container is running but PostgreSQL is not responding.
+       Wait a few seconds and try again, or check logs:
+         docker logs $POSTGRES_CONTAINER"
+    fi
+    
+    print_success "PostgreSQL container is running and healthy"
+}
+
+check_docker_network() {
+    print_step "Checking Docker network ($DOCKER_NETWORK)..."
+    
+    if ! docker network ls --format '{{.Name}}' | grep -q "^${DOCKER_NETWORK}$"; then
+        abort "Docker network '$DOCKER_NETWORK' does not exist.
+       
+       To fix:
+         docker network create $DOCKER_NETWORK"
+    fi
+    
+    print_success "Docker network exists"
+}
+
+check_database_exists() {
+    local db_name="$1"
+    docker exec "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -d postgres -lqt | cut -d \| -f 1 | grep -qw "$db_name"
+}
+
+check_user_exists() {
+    local user_name="$1"
+    docker exec "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='$user_name'" | grep -q 1
+}
+
+check_schema_exists() {
+    local db_name="$1"
+    local schema_name="$2"
+    docker exec "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -d "$db_name" -tAc "SELECT 1 FROM information_schema.schemata WHERE schema_name='$schema_name'" | grep -q 1
+}
+
+check_url_responding() {
+    local url="$1"
+    local timeout="${2:-5}"
+    curl --silent --fail --max-time "$timeout" "$url" > /dev/null 2>&1
+}
+
+check_url_with_retry() {
+    local url="$1"
+    local service_name="$2"
+    local max_attempts="${3:-30}"
+    local attempt=1
+    
+    while [[ $attempt -le $max_attempts ]]; do
+        if check_url_responding "$url" 5; then
+            return 0
+        fi
+        printf "  Waiting for %s... (%d/%d)\r" "$service_name" "$attempt" "$max_attempts"
+        sleep 2
+        ((attempt++))
+    done
+    
+    return 1
+}
+
+# =============================================================================
+# SETUP FUNCTIONS
+# =============================================================================
+
+create_databases() {
+    print_step "Creating POC databases and users..."
+    
+    # Check if databases already exist
+    if check_database_exists "airbyte_raw" && check_database_exists "dbt_analytics"; then
+        print_info "Databases already exist, skipping creation"
+        print_success "Databases verified"
+        return 0
+    fi
+    
+    # Create users first via SQL script
+    print_info "Creating users (dbt_user, airbyte_user)..."
+    if ! docker exec -i "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -d postgres < "$SCRIPT_DIR/init_databases.sql" 2>&1; then
+        abort "Failed to create users."
+    fi
+    
+    # Create databases via shell (CREATE DATABASE cannot run inside transaction)
+    if ! check_database_exists "airbyte_raw"; then
+        print_info "Creating database: airbyte_raw..."
+        if ! docker exec "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -d postgres -c "CREATE DATABASE airbyte_raw OWNER airbyte_user;" 2>&1; then
+            abort "Failed to create airbyte_raw database"
+        fi
+    fi
+    
+    if ! check_database_exists "dbt_analytics"; then
+        print_info "Creating database: dbt_analytics..."
+        if ! docker exec "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -d postgres -c "CREATE DATABASE dbt_analytics OWNER dbt_user;" 2>&1; then
+            abort "Failed to create dbt_analytics database"
+        fi
+    fi
+    
+    # Grant cross-database access
+    print_info "Granting cross-database access..."
+    docker exec "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -d postgres -c "GRANT CONNECT ON DATABASE airbyte_raw TO dbt_user;" 2>&1 || true
+    
+    # Validate databases were created
+    if ! check_database_exists "airbyte_raw"; then
+        abort "Database 'airbyte_raw' was not created"
+    fi
+    
+    if ! check_database_exists "dbt_analytics"; then
+        abort "Database 'dbt_analytics' was not created"
+    fi
+    
+    # Validate users were created
+    if ! check_user_exists "airbyte_user"; then
+        abort "User 'airbyte_user' was not created"
+    fi
+    
+    if ! check_user_exists "dbt_user"; then
+        abort "User 'dbt_user' was not created"
+    fi
+    
+    print_success "Databases and users created successfully"
+}
+
+create_schemas() {
+    print_step "Creating dbt schemas (staging, marts, gold)..."
+    
+    # Check if schemas already exist
+    if check_schema_exists "dbt_analytics" "staging" && \
+       check_schema_exists "dbt_analytics" "marts" && \
+       check_schema_exists "dbt_analytics" "gold"; then
+        print_info "Schemas already exist, skipping creation"
+        print_success "Schemas verified"
+        return 0
+    fi
+    
+    # Run schema creation script
+    print_info "Running init_dbt_analytics_schemas.sql..."
+    if ! docker exec -i "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -d dbt_analytics < "$SCRIPT_DIR/init_dbt_analytics_schemas.sql" 2>&1; then
+        abort "Failed to create schemas in dbt_analytics.
+       
+       Check that dbt_analytics database exists and is accessible."
+    fi
+    
+    # Validate schemas
+    for schema in staging marts gold; do
+        if ! check_schema_exists "dbt_analytics" "$schema"; then
+            abort "Schema '$schema' was not created in dbt_analytics"
+        fi
+    done
+    
+    print_success "Schemas created successfully"
+}
+
+set_permissions() {
+    print_step "Setting permissions on airbyte_raw database..."
+    
+    print_info "Running init_airbyte_raw_permissions.sql..."
+    if ! docker exec -i "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -d airbyte_raw < "$SCRIPT_DIR/init_airbyte_raw_permissions.sql" 2>&1; then
+        abort "Failed to set permissions on airbyte_raw.
+       
+       Check that airbyte_raw database and dbt_user exist."
+    fi
+    
+    print_success "Permissions configured"
+}
+
+start_containers() {
+    print_step "Starting Docker containers (dbt + Airflow)..."
+    
+    cd "$PROJECT_DIR"
+    
+    # Validate docker-compose.yaml exists
+    if [[ ! -f "docker-compose.yaml" ]]; then
+        abort "docker-compose.yaml not found in $PROJECT_DIR"
+    fi
+    
+    # Start containers
+    print_info "Running docker compose up -d..."
+    if ! docker compose up -d 2>&1; then
+        abort "Failed to start containers.
+       
+       Check docker-compose.yaml syntax:
+         docker compose config
+       
+       Check for port conflicts:
+         - Airflow uses port 8080
+         - Ensure no other service is using this port"
+    fi
+    
+    print_success "Containers started"
+}
+
+wait_for_airflow() {
+    print_step "Waiting for Airflow to be ready..."
+    
+    local max_attempts=60
+    local attempt=1
+    
+    print_info "This may take 60-90 seconds on first run..."
+    
+    # First wait for container to be running
+    while [[ $attempt -le 15 ]]; do
+        if docker exec airflow airflow db check &> /dev/null; then
+            break
+        fi
+        printf "  Initializing Airflow database... (%d/15)\r" "$attempt"
+        sleep 2
+        ((attempt++))
+    done
+    echo ""
+    
+    # Then wait for web server to respond
+    print_info "Waiting for Airflow web server..."
+    if check_url_with_retry "$AIRFLOW_HEALTH_URL" "Airflow" 45; then
+        echo ""
+        print_success "Airflow web server is responding"
+        return 0
+    fi
+    
+    echo ""
+    print_warning "Airflow web server not responding yet"
+    print_info "This might be normal on first run. The service may still be starting."
+    print_info "Check status with: docker logs airflow"
+    return 1
+}
+
+verify_airflow_url() {
+    print_step "Verifying Airflow UI accessibility..."
+    
+    if check_url_responding "$AIRFLOW_URL" 5; then
+        print_success "Airflow UI is accessible at $AIRFLOW_URL"
+        return 0
+    else
+        print_warning "Airflow UI not accessible yet at $AIRFLOW_URL"
+        print_info "The service may still be starting. Try again in a few seconds."
+        return 1
+    fi
+}
+
+wait_for_dbt() {
+    print_step "Verifying dbt container..."
+    
+    local max_attempts=10
+    local attempt=1
+    
+    while [[ $attempt -le $max_attempts ]]; do
+        if docker exec dbt-runner dbt --version &> /dev/null; then
+            print_success "dbt container is ready"
+            return 0
+        fi
+        
+        sleep 1
+        ((attempt++))
+    done
+    
+    abort "dbt container is not responding.
+       
+       Check container status:
+         docker ps -a | grep dbt-runner
+         docker logs dbt-runner"
+}
+
+seed_test_data() {
+    print_step "Seeding test data into airbyte_raw..."
+    
+    print_info "Running seed_test_data.sql..."
+    if ! docker exec -i "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -d airbyte_raw < "$SCRIPT_DIR/seed_test_data.sql" 2>&1; then
+        abort "Failed to seed test data.
+       
+       Check that airbyte_raw database exists and tables can be created."
+    fi
+    
+    # Validate data was inserted
+    local user_count=$(docker exec "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -d airbyte_raw -tAc "SELECT COUNT(*) FROM _airbyte_raw_users" 2>/dev/null || echo "0")
+    
+    if [[ "$user_count" -lt 1 ]]; then
+        abort "Test data was not inserted correctly. Expected users in _airbyte_raw_users table."
+    fi
+    
+    print_success "Test data seeded ($user_count users)"
+}
+
+# =============================================================================
+# SERVICE STATUS CHECK
+# =============================================================================
+
+check_all_services() {
+    print_step "Verifying all services are accessible..."
+    
+    local all_ok=true
+    
+    # Check Airflow UI
+    print_info "Checking Airflow UI..."
+    if check_url_responding "$AIRFLOW_URL" 5; then
+        AIRFLOW_STATUS="${GREEN}● ONLINE${NC}"
+    else
+        AIRFLOW_STATUS="${RED}○ OFFLINE${NC}"
+        all_ok=false
+    fi
+    
+    # Check PostgreSQL
+    print_info "Checking PostgreSQL..."
+    if docker exec "$POSTGRES_CONTAINER" pg_isready -U "$POSTGRES_USER" &> /dev/null; then
+        POSTGRES_STATUS="${GREEN}● ONLINE${NC}"
+    else
+        POSTGRES_STATUS="${RED}○ OFFLINE${NC}"
+        all_ok=false
+    fi
+    
+    # Check dbt container
+    print_info "Checking dbt container..."
+    if docker exec dbt-runner dbt --version &> /dev/null; then
+        DBT_STATUS="${GREEN}● READY${NC}"
+    else
+        DBT_STATUS="${RED}○ NOT READY${NC}"
+        all_ok=false
+    fi
+    
+    echo ""
+    
+    if $all_ok; then
+        print_success "All services are online and healthy"
+    else
+        print_warning "Some services are not fully ready yet"
+    fi
+    
+    return 0
+}
+
+print_service_urls() {
+    echo ""
+    echo "┌────────────────────────────────────────────────────────────────────────┐"
+    echo "│                         SERVICE STATUS                                 │"
+    echo "├────────────────────────────────────────────────────────────────────────┤"
+    printf "│  %-12s  %-8b  %-28s  %-12s │\n" "Service" "Status" "URL" "Credentials"
+    echo "├────────────────────────────────────────────────────────────────────────┤"
+    printf "│  %-12s  %b  %-28s  %-12s │\n" "Airflow" "$AIRFLOW_STATUS" "$AIRFLOW_URL" "admin/admin"
+    printf "│  %-12s  %b  %-28s  %-12s │\n" "PostgreSQL" "$POSTGRES_STATUS" "localhost:5432" "postgres"
+    printf "│  %-12s  %b  %-28s  %-12s │\n" "dbt" "$DBT_STATUS" "(CLI only)" "-"
+    echo "└────────────────────────────────────────────────────────────────────────┘"
+    echo ""
+    echo "📌 Quick Links:"
+    echo "   • Airflow UI:     $AIRFLOW_URL"
+    echo "   • Airflow DAGs:   $AIRFLOW_URL/dags/elt_pipeline/grid"
+    echo ""
+}
+
+# =============================================================================
+# CLEANUP FUNCTION
+# =============================================================================
+
+cleanup() {
+    print_header "CLEANUP: Removing POC resources"
+    
+    print_step "Stopping containers..."
+    cd "$PROJECT_DIR"
+    docker compose down 2>/dev/null || true
+    print_success "Containers stopped"
+    
+    print_step "Dropping databases..."
+    docker exec "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -c "DROP DATABASE IF EXISTS airbyte_raw;" 2>/dev/null || true
+    docker exec "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -c "DROP DATABASE IF EXISTS dbt_analytics;" 2>/dev/null || true
+    print_success "Databases dropped"
+    
+    print_step "Dropping users..."
+    docker exec "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -c "DROP USER IF EXISTS dbt_user;" 2>/dev/null || true
+    docker exec "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -c "DROP USER IF EXISTS airbyte_user;" 2>/dev/null || true
+    print_success "Users dropped"
+    
+    print_header "CLEANUP COMPLETE"
+    echo ""
+    echo "All POC resources have been removed."
+    echo "Your n8n-postgres container and data are intact."
+    echo ""
+}
+
+# =============================================================================
+# MAIN
+# =============================================================================
+
+main() {
+    print_header "Airbyte + dbt POC Setup"
+    echo ""
+    echo "This script will:"
+    echo "  1. Verify prerequisites (Docker, PostgreSQL container)"
+    echo "  2. Create isolated databases (airbyte_raw, dbt_analytics)"
+    echo "  3. Create dbt schemas (staging, marts, gold)"
+    echo "  4. Start containers (dbt-runner, Airflow)"
+    if [[ "$1" == "--seed" ]]; then
+        echo "  5. Seed test data (Faker-like sample data)"
+    fi
+    echo ""
+    
+    # Prerequisites
+    check_docker
+    check_docker_network
+    check_postgres_container
+    
+    # Database setup
+    create_databases
+    create_schemas
+    set_permissions
+    
+    # Container startup
+    start_containers
+    wait_for_dbt
+    wait_for_airflow
+    
+    # Optional: Seed data
+    if [[ "$1" == "--seed" ]]; then
+        seed_test_data
+    fi
+    
+    # Verify all services and show status
+    check_all_services
+    
+    # Success message
+    print_header "SETUP COMPLETE"
+    echo ""
+    echo -e "${GREEN}Your ELT pipeline is ready!${NC}"
+    
+    print_service_urls
+    
+    echo "🚀 Next steps:"
+    echo "   1. Open Airflow UI: $AIRFLOW_URL"
+    echo "   2. Find 'elt_pipeline' DAG"
+    echo "   3. Toggle ON and click 'Trigger DAG'"
+    echo ""
+    if [[ "$1" != "--seed" ]]; then
+        echo "💡 Tip: Run with --seed to load test data:"
+        echo "   ./scripts/setup.sh --seed"
+        echo ""
+    fi
+    echo "🧹 To tear down the POC:"
+    echo "   ./scripts/setup.sh --clean"
+    echo ""
+}
+
+# =============================================================================
+# ENTRY POINT
+# =============================================================================
+
+case "${1:-}" in
+    --clean)
+        cleanup
+        ;;
+    --seed|"")
+        main "$1"
+        ;;
+    --help|-h)
+        echo "Usage: $0 [OPTIONS]"
+        echo ""
+        echo "Options:"
+        echo "  (none)    Full setup without test data"
+        echo "  --seed    Full setup + load test data"
+        echo "  --clean   Tear down all POC resources"
+        echo "  --help    Show this help message"
+        echo ""
+        ;;
+    *)
+        echo "Unknown option: $1"
+        echo "Run '$0 --help' for usage"
+        exit 1
+        ;;
+esac
