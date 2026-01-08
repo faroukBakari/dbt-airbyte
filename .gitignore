@@ -7,6 +7,7 @@
 dbt_project/target/
 dbt_project/dbt_packages/
 dbt_project/logs/
+profiles/.user.yml
 
 # Environment
 .env
@@ -19,3 +20,6 @@ dbt_project/logs/
 
 # OS
 .DS_Store
+
+.cursor/
+.github/
