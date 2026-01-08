@@ -3,7 +3,7 @@ dbt_airbyte_poc:
   outputs:
     dev:
       type: postgres
-      host: n8n-postgres          # Docker service name (same network)
+      host: "{{ env_var('POSTGRES_HOST_DOCKER', 'postgres') }}"
       port: 5432
       user: "{{ env_var('DBT_USER', 'dbt_user') }}"
       password: "{{ env_var('DBT_PASSWORD', 'dbt_password') }}"

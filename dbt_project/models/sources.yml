@@ -7,7 +7,22 @@ sources:
     tables:
       - name: _airbyte_raw_users
         description: "Fake user profiles (name, email, address, etc.)"
+        columns:
+          - name: _airbyte_data
+            description: "JSON blob containing user data"
+            tests:
+              - not_null
       - name: _airbyte_raw_products
         description: "Fake product catalog (cars: make, model, year, price)"
+        columns:
+          - name: _airbyte_data
+            description: "JSON blob containing product data"
+            tests:
+              - not_null
       - name: _airbyte_raw_purchases
         description: "Fake purchase transactions linking users to products"
+        columns:
+          - name: _airbyte_data
+            description: "JSON blob containing purchase data"
+            tests:
+              - not_null

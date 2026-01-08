@@ -5,7 +5,7 @@ A minimalistic **Modern Data Stack** proof-of-concept demonstrating end-to-end E
 - **Airbyte** — Data extraction & loading (EL)
 - **dbt Core** — Data transformation (T)
 - **Airflow** — Pipeline orchestration
-- **PostgreSQL** — Data warehouse (reusing existing `postgres`)
+- **PostgreSQL** — Data warehouse (external container)
 
 > 🎯 **Goal**: Ingest fake e-commerce data (users, products, purchases), transform it through staging → marts → gold layers, and produce analytics-ready tables.
 
@@ -36,7 +36,7 @@ A minimalistic **Modern Data Stack** proof-of-concept demonstrating end-to-end E
 ./scripts/run_pipeline.sh
 
 # 3. Query the results
-docker exec -it postgres psql -U db_user -d airbyte_raw \
+docker exec -it $POSTGRES_CONTAINER psql -U $POSTGRES_USER -d airbyte_raw \
   -c "SELECT full_name, total_spent, avg_purchase_value FROM gold.gold_user_purchases;"
 ```
 
@@ -57,8 +57,7 @@ docker exec -it postgres psql -U db_user -d airbyte_raw \
 | Requirement | Version | Notes |
 |-------------|---------|-------|
 | Docker | 20.10+ | With Docker Compose v2 |
-| Docker Network | `poc-network` | Must exist before setup |
-| PostgreSQL Container | `postgres` | Existing container on port 5432 |
+| PostgreSQL Container | Any | External container on port 5432 |
 
 ### Verify Prerequisites
 
@@ -66,10 +65,10 @@ docker exec -it postgres psql -U db_user -d airbyte_raw \
 # Check Docker
 docker --version
 
-# Check poc-network exists
+# Check network exists (or let setup.sh create it)
 docker network ls | grep poc-network
 
-# Check postgres is running
+# Check PostgreSQL is running
 docker ps | grep postgres
 ```
 
@@ -91,7 +90,7 @@ docker ps | grep postgres
 │         │    │                                                             │
 │         ▼    ▼                                                             │
 │  ┌─────────────────────────────────────────────────────────────┐           │
-│  │                     postgres :5432                      │           │
+│  │                   PostgreSQL :5432                          │           │
 │  │  ┌─────────────────┐         ┌────────────────────────────┐ │           │
 │  │  │   airbyte_raw   │         │       dbt transforms       │ │           │
 │  │  │  (raw JSON)     │────────▶│  staging → marts → gold    │ │           │
@@ -107,14 +106,13 @@ docker ps | grep postgres
 |---------|-----|-------------|
 | **Airbyte** | http://localhost:8000 | `airbyte` / `password` |
 | **Airflow** | http://localhost:8080 | `admin` / `admin` |
-| **PostgreSQL** | localhost:5432 | `db_user` (superuser) |
+| **PostgreSQL** | localhost:5432 | See `.env` |
 
 ### Databases & Users
 
 | Database | User | Purpose |
 |----------|------|---------|
-| `airbyte_raw` | `airbyte_user` | Raw data from Airbyte + dbt transforms |
-| `dbt_analytics` | `dbt_user` | (Reserved for future separation) |
+| `airbyte_raw` | `airbyte_user` | Raw data from Airbyte + dbt transforms (staging, marts, gold) |
 
 ---
 
@@ -196,8 +194,8 @@ FROM gold.gold_user_purchases;
 ```
 
 This automatically:
-- ✅ Creates databases (`airbyte_raw`, `dbt_analytics`)
-- ✅ Creates users with proper grants (`airbyte_user`, `dbt_user`)
+- ✅ Creates database (`airbyte_raw`) and users
+- ✅ Creates dbt schemas (staging, marts, gold)
 - ✅ Starts Airbyte (6 containers)
 - ✅ Starts Airflow + dbt-runner
 - ✅ Configures Airbyte source, destination, and connection
@@ -283,7 +281,7 @@ docker exec dbt-runner dbt test
 ### Connect to Database
 
 ```bash
-docker exec -it postgres psql -U db_user -d airbyte_raw
+docker exec -it $POSTGRES_CONTAINER psql -U $POSTGRES_USER -d airbyte_raw
 ```
 
 ### Gold Layer Queries
@@ -341,21 +339,21 @@ ORDER BY revenue DESC;
 ```bash
 # Row counts across all layers
 echo "=== RAW LAYER ===" && \
-docker exec postgres psql -U db_user -d airbyte_raw -c \
+docker exec $POSTGRES_CONTAINER psql -U $POSTGRES_USER -d airbyte_raw -c \
   "SELECT '_airbyte_raw_users' as table_name, COUNT(*) FROM _airbyte_raw_users
    UNION ALL SELECT '_airbyte_raw_products', COUNT(*) FROM _airbyte_raw_products
    UNION ALL SELECT '_airbyte_raw_purchases', COUNT(*) FROM _airbyte_raw_purchases;"
 
 echo "=== STAGING LAYER ===" && \
-docker exec postgres psql -U db_user -d airbyte_raw -c \
+docker exec $POSTGRES_CONTAINER psql -U $POSTGRES_USER -d airbyte_raw -c \
   "SELECT user_id, full_name, occupation, city FROM staging.stg_users LIMIT 5;"
 
 echo "=== MARTS LAYER ===" && \
-docker exec postgres psql -U db_user -d airbyte_raw -c \
+docker exec $POSTGRES_CONTAINER psql -U $POSTGRES_USER -d airbyte_raw -c \
   "SELECT user_id, full_name, total_purchases, total_spent FROM marts.dim_users;"
 
 echo "=== GOLD LAYER ===" && \
-docker exec postgres psql -U db_user -d airbyte_raw -c \
+docker exec $POSTGRES_CONTAINER psql -U $POSTGRES_USER -d airbyte_raw -c \
   "SELECT full_name, total_spent, avg_purchase_value, return_rate_pct FROM gold.gold_user_purchases;"
 ```
 
@@ -405,11 +403,11 @@ docker exec airflow airflow variables set airbyte_connection_id "<connection-id>
 
 **Error:** `relation "staging.stg_users" does not exist`
 
-**Cause:** Querying wrong database. dbt writes to `airbyte_raw`, not `dbt_analytics`.
+**Cause:** Not connected to correct database.
 
 **Fix:** Connect to `airbyte_raw`:
 ```bash
-docker exec -it postgres psql -U db_user -d airbyte_raw
+docker exec -it $POSTGRES_CONTAINER psql -U $POSTGRES_USER -d airbyte_raw
 ```
 
 ---

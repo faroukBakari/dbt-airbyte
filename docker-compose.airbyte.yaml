@@ -95,7 +95,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - airbyte_internal
-      - n8n-network
+      - poc-network
     depends_on:
       airbyte-bootloader:
         condition: service_completed_successfully
@@ -136,7 +136,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - airbyte_internal
-      - n8n-network
+      - poc-network
     depends_on:
       airbyte-bootloader:
         condition: service_completed_successfully
@@ -186,7 +186,7 @@ services:
       - BASIC_AUTH_PROXY_TIMEOUT=900
     networks:
       - airbyte_internal
-      - n8n-network
+      - poc-network
     depends_on:
       - airbyte-webapp
       - airbyte-server
@@ -203,5 +203,6 @@ volumes:
 networks:
   airbyte_internal:
     driver: bridge
-  n8n-network:
+  poc-network:
+    name: ${DOCKER_NETWORK:-poc-network}
     external: true

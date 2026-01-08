@@ -4,7 +4,7 @@ ELT Pipeline DAG - Airbyte + dbt POC
 Orchestrates the full ELT workflow:
 1. Trigger Airbyte sync (or seed test data as fallback)
 2. Run dbt staging models
-3. Run dbt mart models  
+3. Run dbt mart models
 4. Run dbt gold models
 5. Run dbt tests
 
@@ -22,8 +22,8 @@ from airflow.operators.python import PythonOperator, BranchPythonOperator
 from airflow.operators.empty import EmptyOperator
 
 # Environment variables (loaded from .env.generated via docker-compose)
-POSTGRES_CONTAINER = os.getenv('POSTGRES_CONTAINER', 'n8n-postgres')
-POSTGRES_USER = os.getenv('POSTGRES_USER', 'n8n_user')
+POSTGRES_CONTAINER = os.getenv('POSTGRES_CONTAINER', 'postgres')
+POSTGRES_USER = os.getenv('POSTGRES_USER', 'postgres')
 AIRBYTE_DB_NAME = os.getenv('AIRBYTE_DB_NAME', 'airbyte_raw')
 
 # Default arguments for all tasks
@@ -82,26 +82,26 @@ with DAG(
         bash_command='''
             CONNECTION_ID="{{ var.value.airbyte_connection_id }}"
             echo "Triggering Airbyte sync for connection: $CONNECTION_ID"
-            
+
             # Trigger sync via Airbyte API
             RESPONSE=$(curl -s -X POST "http://airbyte-proxy:8000/api/v1/connections/sync" \
                 -u "airbyte:password" \
                 -H "Content-Type: application/json" \
                 -d '{"connectionId": "'"$CONNECTION_ID"'"}')
-            
+
             echo "Response: $RESPONSE"
-            
+
             # Extract job ID using Python for robust JSON parsing
             JOB_ID=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('job',{}).get('id',''))" 2>/dev/null)
-            
+
             if [ -z "$JOB_ID" ]; then
                 echo "❌ Failed to start Airbyte sync - could not parse job ID from response"
                 echo "Raw response: $RESPONSE"
                 exit 1
             fi
-            
+
             echo "✅ Airbyte sync started with job ID: $JOB_ID"
-            
+
             # Poll for completion (max 10 minutes)
             for i in $(seq 1 60); do
                 sleep 10
@@ -109,9 +109,9 @@ with DAG(
                     -u "airbyte:password" \
                     -H "Content-Type: application/json" \
                     -d '{"id": '"$JOB_ID"'}' | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('job',{}).get('status',''))" 2>/dev/null)
-                
+
                 echo "Job status: $STATUS (attempt $i/60)"
-                
+
                 if [ "$STATUS" = "succeeded" ]; then
                     echo "✅ Airbyte sync completed successfully!"
                     exit 0
@@ -120,7 +120,7 @@ with DAG(
                     exit 1
                 fi
             done
-            
+
             echo "⚠️ Timeout waiting for Airbyte sync"
             exit 1
         ''',
@@ -215,6 +215,6 @@ with DAG(
     check_mode >> [trigger_airbyte_sync, seed_raw_data]
     trigger_airbyte_sync >> data_loaded
     seed_raw_data >> data_loaded
-    
+
     # Sequential dbt flow
     data_loaded >> dbt_run_staging >> dbt_run_marts >> dbt_run_gold >> dbt_test >> pipeline_complete

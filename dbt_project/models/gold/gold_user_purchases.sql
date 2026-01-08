@@ -7,19 +7,19 @@ with user_purchases as (
 ),
 
 products as (
-    select * from {{ ref('stg_products') }}
+    select * from {{ ref('dim_products') }}
 ),
 
 purchases as (
     select * from {{ ref('stg_purchases') }}
 ),
 
--- Get most purchased product per user
-user_favorite_product as (
+-- Get last purchased product per user
+user_last_purchase as (
     select distinct on (p.user_id)
         p.user_id,
-        pr.make || ' ' || pr.model as favorite_product,
-        pr.price as favorite_product_price
+        pr.make || ' ' || pr.model as last_product,
+        pr.price as last_product_price
     from purchases p
     join products pr on p.product_id = pr.product_id
     order by p.user_id, p.purchased_at desc
@@ -39,12 +39,12 @@ select
     up.total_returns,
     round(up.total_spent / nullif(up.total_purchases, 0), 2) as avg_purchase_value,
     round(up.total_returns::numeric / nullif(up.total_purchases, 0) * 100, 1) as return_rate_pct,
-    ufp.favorite_product as last_purchased_product,
-    ufp.favorite_product_price as last_purchased_price,
+    ulp.last_product as last_purchased_product,
+    ulp.last_product_price as last_purchased_price,
     up.first_purchase_at,
     up.last_purchase_at,
     up.created_at as user_created_at,
     current_timestamp as refreshed_at
 from user_purchases up
-left join user_favorite_product ufp on up.user_id = ufp.user_id
+left join user_last_purchase ulp on up.user_id = ulp.user_id
 where up.total_purchases > 0

@@ -48,7 +48,7 @@ SOURCE_CONFIG = {
 
 # Destination configuration (PostgreSQL -> airbyte_raw)
 # NOTE: Use "localhost" because Airbyte connectors run with --network host
-#       where Docker DNS (n8n-postgres) is not available.
+#       where Docker DNS (container names) is not available.
 _airbyte_db_name = os.getenv("AIRBYTE_DB_NAME", "airbyte_raw")
 DESTINATION_NAME = f"PostgreSQL ({_airbyte_db_name})"
 DESTINATION_CONFIG = {
@@ -73,32 +73,32 @@ CONNECTION_NAME = f"Faker → PostgreSQL ({_airbyte_db_name})"
 def _api_request(endpoint: str, payload: dict) -> dict:
     """
     Make a POST request to the Airbyte Config API.
-    
+
     Args:
         endpoint: API endpoint (e.g., "workspaces/list")
         payload: JSON payload to send
-        
+
     Returns:
         Parsed JSON response
-        
+
     Raises:
         SystemExit on HTTP errors
     """
     url = f"{AIRBYTE_URL}/{endpoint}"
-    
+
     # Prepare request with Basic Auth
     credentials = base64.b64encode(
         f"{AIRBYTE_USERNAME}:{AIRBYTE_PASSWORD}".encode()
     ).decode()
-    
+
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Basic {credentials}",
     }
-    
+
     data = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(url, data=data, headers=headers, method="POST")
-    
+
     try:
         with urllib.request.urlopen(request, timeout=120) as response:
             return json.loads(response.read().decode("utf-8"))
@@ -126,11 +126,11 @@ def get_workspace_id() -> str:
     _log("→ Getting workspace ID...")
     response = _api_request("workspaces/list", {})
     workspaces = response.get("workspaces", [])
-    
+
     if not workspaces:
         _log("✗ No workspaces found. Airbyte may not be initialized.")
         sys.exit(1)
-    
+
     workspace_id = workspaces[0]["workspaceId"]
     _log(f"  Workspace: {workspace_id}")
     return workspace_id
@@ -139,7 +139,7 @@ def get_workspace_id() -> str:
 def get_or_create_source(workspace_id: str) -> str:
     """Get existing or create new Faker source."""
     _log("→ Checking for existing source...")
-    
+
     # Check if source already exists
     response = _api_request("sources/list", {"workspaceId": workspace_id})
     for source in response.get("sources", []):
@@ -147,7 +147,7 @@ def get_or_create_source(workspace_id: str) -> str:
             source_id = source["sourceId"]
             _log(f"  Found existing source: {source_id}")
             return source_id
-    
+
     # Create new source
     _log("  Creating new source...")
     response = _api_request("sources/create", {
@@ -156,7 +156,7 @@ def get_or_create_source(workspace_id: str) -> str:
         "connectionConfiguration": SOURCE_CONFIG,
         "name": SOURCE_NAME,
     })
-    
+
     source_id = response["sourceId"]
     _log(f"  ✓ Created source: {source_id}")
     return source_id
@@ -165,7 +165,7 @@ def get_or_create_source(workspace_id: str) -> str:
 def get_or_create_destination(workspace_id: str) -> str:
     """Get existing or create new PostgreSQL destination."""
     _log("→ Checking for existing destination...")
-    
+
     # Check if destination already exists
     response = _api_request("destinations/list", {"workspaceId": workspace_id})
     for dest in response.get("destinations", []):
@@ -173,7 +173,7 @@ def get_or_create_destination(workspace_id: str) -> str:
             dest_id = dest["destinationId"]
             _log(f"  Found existing destination: {dest_id}")
             return dest_id
-    
+
     # Create new destination
     _log("  Creating new destination...")
     response = _api_request("destinations/create", {
@@ -182,7 +182,7 @@ def get_or_create_destination(workspace_id: str) -> str:
         "connectionConfiguration": DESTINATION_CONFIG,
         "name": DESTINATION_NAME,
     })
-    
+
     dest_id = response["destinationId"]
     _log(f"  ✓ Created destination: {dest_id}")
     return dest_id
@@ -196,28 +196,28 @@ def discover_schema(source_id: str) -> dict:
     """Discover the source schema (streams available)."""
     _log("→ Discovering source schema...")
     _log("  This may take 30-60 seconds on first run...")
-    
+
     response = _api_request("sources/discover_schema", {
         "sourceId": source_id,
         "disable_cache": True,
     })
-    
+
     catalog = response.get("catalog", {})
     streams = catalog.get("streams", [])
     stream_names = [s["stream"]["name"] for s in streams]
     _log(f"  ✓ Found streams: {', '.join(stream_names)}")
-    
+
     return response
 
 
 def build_sync_catalog(discovered_schema: dict) -> dict:
     """
     Transform discovered catalog into syncCatalog with all streams enabled.
-    
+
     Uses full_refresh + overwrite for simplicity in POC.
     """
     streams = []
-    
+
     for stream_entry in discovered_schema.get("catalog", {}).get("streams", []):
         stream = stream_entry["stream"]
         streams.append({
@@ -231,7 +231,7 @@ def build_sync_catalog(discovered_schema: dict) -> dict:
                 "aliasName": stream["name"],
             }
         })
-    
+
     return {"streams": streams}
 
 
@@ -247,16 +247,16 @@ def get_or_create_connection(
 ) -> str:
     """Get existing or create new connection."""
     _log("→ Checking for existing connection...")
-    
+
     # Check if connection already exists
     response = _api_request("connections/list", {"workspaceId": workspace_id})
     for conn in response.get("connections", []):
-        if (conn.get("sourceId") == source_id and 
+        if (conn.get("sourceId") == source_id and
             conn.get("destinationId") == destination_id):
             conn_id = conn["connectionId"]
             _log(f"  Found existing connection: {conn_id}")
             return conn_id
-    
+
     # Create new connection
     _log("  Creating new connection...")
     response = _api_request("connections/create", {
@@ -272,7 +272,7 @@ def get_or_create_connection(
         "geography": "auto",
         "nonBreakingChangesPreference": "ignore",
     })
-    
+
     conn_id = response["connectionId"]
     _log(f"  ✓ Created connection: {conn_id}")
     return conn_id
@@ -285,7 +285,7 @@ def get_or_create_connection(
 def main() -> int:
     """
     Main entry point.
-    
+
     Returns:
         0 on success, 1 on failure
     """
@@ -294,26 +294,26 @@ def main() -> int:
     _log("  Airbyte Auto-Configuration")
     _log("=" * 50)
     _log("")
-    
+
     try:
         # Step 1: Get workspace
         workspace_id = get_workspace_id()
-        
+
         # Step 2: Create/get source
         source_id = get_or_create_source(workspace_id)
-        
+
         # Step 3: Create/get destination
         destination_id = get_or_create_destination(workspace_id)
-        
+
         # Step 4: Discover schema and build sync catalog
         discovered_schema = discover_schema(source_id)
         sync_catalog = build_sync_catalog(discovered_schema)
-        
+
         # Step 5: Create/get connection
         connection_id = get_or_create_connection(
             workspace_id, source_id, destination_id, sync_catalog
         )
-        
+
         _log("")
         _log("=" * 50)
         _log("  ✓ Configuration Complete!")
@@ -322,11 +322,11 @@ def main() -> int:
         _log(f"  Destination: {destination_id}")
         _log(f"  Connection:  {connection_id}")
         _log("")
-        
+
         # Output connection_id to stdout (for setup.sh to capture)
         print(connection_id)
         return 0
-        
+
     except KeyboardInterrupt:
         _log("\n✗ Aborted by user")
         return 1
