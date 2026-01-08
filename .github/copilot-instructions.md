@@ -61,11 +61,13 @@ docker exec dbt-runner dbt test
 ### 2. Create Destination: PostgreSQL
 | Field | Value |
 |-------|-------|
-| Host | `n8n-postgres` |
+| Host | `localhost` |
 | Port | `5432` |
 | Database | `airbyte_raw` |
 | User | `airbyte_user` |
 | Password | `airbyte_password` |
+
+> ⚠️ **Important**: Use `localhost` (not `n8n-postgres`) because Airbyte connectors run with `--network host` where Docker DNS is unavailable.
 
 ### 3. Create Connection
 - Link Faker source → PostgreSQL destination

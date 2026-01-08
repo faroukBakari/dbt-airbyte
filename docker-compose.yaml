@@ -30,7 +30,7 @@ services:
       - "8080:8080"
     networks:
       - n8n-network
-    user: "${AIRFLOW_UID:-50000}:0"
+    user: "${AIRFLOW_UID:-50000}:${DOCKER_GID:-1001}"
 
 networks:
   n8n-network:

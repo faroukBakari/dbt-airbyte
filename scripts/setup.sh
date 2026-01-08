@@ -365,6 +365,49 @@ wait_for_airbyte() {
     return 1
 }
 
+configure_airbyte() {
+    print_step "Configuring Airbyte (Source, Destination, Connection)..."
+    
+    print_info "Running auto-configuration script..."
+    print_info "This includes schema discovery which may take 30-60 seconds..."
+    
+    # Retry configuration up to 5 times with 10s delay
+    # (Airbyte backend may need extra time after webapp responds)
+    local max_attempts=5
+    local attempt=1
+    local connection_id
+    
+    while [[ $attempt -le $max_attempts ]]; do
+        # Run configure script: stderr shows logs, stdout returns connection_id only
+        if connection_id=$(python3 "$SCRIPT_DIR/configure_airbyte.py"); then
+            print_success "Airbyte configured successfully"
+            print_info "Connection ID: $connection_id"
+            
+            # Set the connection ID as an Airflow variable
+            print_info "Setting Airflow variable 'airbyte_connection_id'..."
+            if docker exec airflow airflow variables set airbyte_connection_id "$connection_id" &>/dev/null; then
+                print_success "Airflow variable set successfully"
+            else
+                print_warning "Could not set Airflow variable automatically"
+                print_info "Set it manually in Airflow UI: Admin → Variables"
+                print_info "  Key: airbyte_connection_id"
+                print_info "  Value: $connection_id"
+            fi
+            
+            export AIRBYTE_CONNECTION_ID="$connection_id"
+            return 0
+        fi
+        
+        print_info "Airbyte backend not ready yet, retrying in 10s... ($attempt/$max_attempts)"
+        sleep 10
+        ((attempt++))
+    done
+    
+    print_warning "Airbyte auto-configuration failed after $max_attempts attempts"
+    print_info "You can configure Airbyte manually via the UI: $AIRBYTE_URL"
+    return 1
+}
+
 wait_for_airflow() {
     print_step "Waiting for Airflow to be ready..."
     
@@ -620,6 +663,7 @@ main() {
     if [[ "$with_airbyte" == "true" ]]; then
         start_airbyte
         wait_for_airbyte
+        configure_airbyte
     # Or seed test data if requested
     elif [[ "$with_seed" == "true" ]]; then
         seed_test_data
@@ -638,15 +682,14 @@ main() {
     echo "🚀 Next steps:"
     if [[ "$with_airbyte" == "true" ]]; then
         echo "   1. Open Airbyte UI: $AIRBYTE_URL (airbyte/password)"
-        echo "   2. Create Source: 'Sample Data (Faker)' → Count: 100, Seed: 42"
-        echo "   3. Create Destination: 'PostgreSQL'"
-        echo "      • Host: n8n-postgres"
-        echo "      • Port: 5432"
-        echo "      • Database: airbyte_raw"
-        echo "      • User: airbyte_user"
-        echo "      • Password: airbyte_password"
-        echo "   4. Create Connection and run first sync"
-        echo "   5. Open Airflow UI: $AIRFLOW_URL → Trigger 'elt_pipeline' DAG"
+        echo "      ✓ Source, Destination, and Connection are pre-configured!"
+        echo "   2. Go to Connections tab and trigger the first sync manually"
+        echo "   3. Open Airflow UI: $AIRFLOW_URL → Trigger 'elt_pipeline' DAG"
+        if [[ -n "${AIRBYTE_CONNECTION_ID:-}" ]]; then
+            echo ""
+            echo "   📋 Connection ID: $AIRBYTE_CONNECTION_ID"
+            echo "      (Already set as Airflow variable)"
+        fi
     else
         echo "   1. Open Airflow UI: $AIRFLOW_URL"
         echo "   2. Find 'elt_pipeline' DAG"

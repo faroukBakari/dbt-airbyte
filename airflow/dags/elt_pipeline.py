@@ -82,7 +82,7 @@ with DAG(
             RESPONSE=$(curl -s -X POST "http://airbyte-proxy:8000/api/v1/connections/sync" \
                 -u "airbyte:password" \
                 -H "Content-Type: application/json" \
-                -d "{\"connectionId\": \"$CONNECTION_ID\"}")
+                -d '{"connectionId": "'"$CONNECTION_ID"'"}')
             
             echo "Response: $RESPONSE"
             
@@ -100,8 +100,10 @@ with DAG(
             # Poll for completion (max 10 minutes)
             for i in $(seq 1 60); do
                 sleep 10
-                STATUS=$(curl -s "http://airbyte-proxy:8000/api/v1/jobs/$JOB_ID" \
-                    -u "airbyte:password" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('job',{}).get('status',''))" 2>/dev/null)
+                STATUS=$(curl -s -X POST "http://airbyte-proxy:8000/api/v1/jobs/get" \
+                    -u "airbyte:password" \
+                    -H "Content-Type: application/json" \
+                    -d '{"id": '"$JOB_ID"'}' | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('job',{}).get('status',''))" 2>/dev/null)
                 
                 echo "Job status: $STATUS (attempt $i/60)"
                 
@@ -129,9 +131,7 @@ with DAG(
     # ==========================================================================
     seed_raw_data = BashOperator(
         task_id='seed_raw_data',
-        bash_command='''
-            docker exec -i n8n-postgres psql -U n8n_user -d airbyte_raw < /opt/airflow/scripts/seed_test_data.sql
-        ''',
+        bash_command='docker exec -i n8n-postgres psql -U n8n_user -d airbyte_raw < /opt/airflow/scripts/seed_test_data.sql',
         doc_md="""
         ### Seed Raw Data
         Loads sample data into `airbyte_raw` database.

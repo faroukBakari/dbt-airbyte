@@ -2,7 +2,6 @@ version: 2
 
 sources:
   - name: airbyte_raw
-    database: airbyte_raw
     schema: public
     description: "Raw data from Airbyte Sample Data (Faker) connector"
     tables:

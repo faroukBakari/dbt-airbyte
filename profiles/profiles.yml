@@ -7,6 +7,6 @@ dbt_airbyte_poc:
       port: 5432
       user: "{{ env_var('DBT_USER', 'dbt_user') }}"
       password: "{{ env_var('DBT_PASSWORD', 'dbt_password') }}"
-      dbname: dbt_analytics
-      schema: public
+      dbname: airbyte_raw         # Connect to source database (cross-db queries not supported)
+      schema: public              # Default schema (models override with staging/marts/gold)
       threads: 2
