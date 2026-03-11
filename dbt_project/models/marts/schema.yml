@@ -1,0 +1,42 @@
+version: 2
+
+models:
+  - name: dim_users
+    description: User dimension with purchase activity summary
+    columns:
+      - name: user_id
+        description: Primary key — unique user identifier
+        tests:
+          - unique
+          - not_null
+      - name: full_name
+        tests:
+          - not_null
+      - name: email
+        tests:
+          - unique
+          - not_null
+      - name: total_purchases
+        tests:
+          - not_null
+      - name: total_spent
+        tests:
+          - not_null
+
+  - name: dim_products
+    description: Product dimension with sales metrics
+    columns:
+      - name: product_id
+        description: Primary key — unique product identifier
+        tests:
+          - unique
+          - not_null
+      - name: make
+        tests:
+          - not_null
+      - name: model
+        tests:
+          - not_null
+      - name: price
+        tests:
+          - not_null

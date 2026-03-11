@@ -25,6 +25,8 @@ from airflow.operators.empty import EmptyOperator
 POSTGRES_CONTAINER = os.getenv('POSTGRES_CONTAINER', 'postgres')
 POSTGRES_USER = os.getenv('POSTGRES_USER', 'postgres')
 AIRBYTE_DB_NAME = os.getenv('AIRBYTE_DB_NAME', 'airbyte_raw')
+AIRBYTE_WEB_USER = os.getenv('AIRBYTE_WEB_USER', 'airbyte')
+AIRBYTE_WEB_PASSWORD = os.getenv('AIRBYTE_WEB_PASSWORD', 'password')
 
 # Default arguments for all tasks
 default_args = {
@@ -81,11 +83,12 @@ with DAG(
         task_id='trigger_airbyte_sync',
         bash_command='''
             CONNECTION_ID="{{ var.value.airbyte_connection_id }}"
+            AIRBYTE_AUTH="${AIRBYTE_WEB_USER:-airbyte}:${AIRBYTE_WEB_PASSWORD:-password}"
             echo "Triggering Airbyte sync for connection: $CONNECTION_ID"
 
             # Trigger sync via Airbyte API
             RESPONSE=$(curl -s -X POST "http://airbyte-proxy:8000/api/v1/connections/sync" \
-                -u "airbyte:password" \
+                -u "$AIRBYTE_AUTH" \
                 -H "Content-Type: application/json" \
                 -d '{"connectionId": "'"$CONNECTION_ID"'"}')
 
@@ -106,7 +109,7 @@ with DAG(
             for i in $(seq 1 60); do
                 sleep 10
                 STATUS=$(curl -s -X POST "http://airbyte-proxy:8000/api/v1/jobs/get" \
-                    -u "airbyte:password" \
+                    -u "$AIRBYTE_AUTH" \
                     -H "Content-Type: application/json" \
                     -d '{"id": '"$JOB_ID"'}' | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('job',{}).get('status',''))" 2>/dev/null)
 

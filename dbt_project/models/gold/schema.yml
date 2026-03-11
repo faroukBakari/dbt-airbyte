@@ -1,0 +1,31 @@
+version: 2
+
+models:
+  - name: gold_user_purchases
+    description: Analytics-ready user purchase summary for BI consumption
+    columns:
+      - name: user_id
+        description: Primary key — unique user identifier (only users with purchases)
+        tests:
+          - unique
+          - not_null
+      - name: full_name
+        tests:
+          - not_null
+      - name: email
+        tests:
+          - unique
+          - not_null
+      - name: total_purchases
+        description: Always > 0 (filtered in model)
+        tests:
+          - not_null
+      - name: total_spent
+        tests:
+          - not_null
+      - name: avg_purchase_value
+        tests:
+          - not_null
+      - name: return_rate_pct
+        tests:
+          - not_null

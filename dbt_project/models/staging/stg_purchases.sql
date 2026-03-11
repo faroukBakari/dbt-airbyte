@@ -2,7 +2,7 @@
 with raw_purchases as (
     select
         _airbyte_data::jsonb as data,
-        _airbyte_extracted_at as loaded_at
+        _airbyte_emitted_at as loaded_at
     from {{ source('airbyte_raw', '_airbyte_raw_purchases') }}
 )
 

@@ -110,6 +110,9 @@ services:
     restart: unless-stopped
     environment:
       - AIRBYTE_VERSION=0.50.5
+      # Worker's bundled Docker CLI (v1.41) is older than the host daemon minimum (v1.44).
+      # Force the CLI to negotiate at v1.44 so it can pull connector images.
+      - DOCKER_API_VERSION=1.44
       - DATABASE_USER=docker
       - DATABASE_PASSWORD=docker
       - DATABASE_URL=jdbc:postgresql://airbyte-db:5432/airbyte

@@ -267,7 +267,7 @@ def get_or_create_connection(
         "name": CONNECTION_NAME,
         "namespaceDefinition": "destination",
         "namespaceFormat": "${SOURCE_NAMESPACE}",
-        "prefix": "_airbyte_raw_",
+        "prefix": "",
         "scheduleType": "manual",
         "geography": "auto",
         "nonBreakingChangesPreference": "ignore",

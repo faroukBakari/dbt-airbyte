@@ -29,21 +29,25 @@ A minimalistic **Modern Data Stack** proof-of-concept demonstrating end-to-end E
 ## 🚀 Quick Start
 
 ```bash
-# 1. Full setup (includes Airbyte)
-./scripts/setup.sh
+# 1. Clone and setup (auto-creates network, PostgreSQL container, and .env)
+git clone <repo-url> && cd dbt-airbyte
+./scripts/setup.sh --seed
 
 # 2. Run the ELT pipeline
 ./scripts/run_pipeline.sh
 
 # 3. Query the results
-docker exec -it $POSTGRES_CONTAINER psql -U $POSTGRES_USER -d airbyte_raw \
+docker exec -it postgres psql -U postgres -d airbyte_raw \
   -c "SELECT full_name, total_spent, avg_purchase_value FROM gold.gold_user_purchases;"
 ```
 
-### Alternative Setup Modes
+### Setup Modes
 
 ```bash
-# Setup WITHOUT Airbyte (lighter, uses seed data)
+# Full setup WITH Airbyte (live ELT pipeline)
+./scripts/setup.sh
+
+# Lightweight setup WITHOUT Airbyte (uses seed data, faster)
 ./scripts/setup.sh --seed
 
 # Cleanup everything
@@ -58,6 +62,7 @@ docker exec -it $POSTGRES_CONTAINER psql -U $POSTGRES_USER -d airbyte_raw \
 |-------------|---------|-------|
 | Docker | 20.10+ | With Docker Compose v2 |
 | PostgreSQL Container | Any | External container on port 5432 |
+| Docker Socket | — | Airflow uses `docker exec` to run dbt and seed commands. The Docker socket must be accessible (mounted automatically by docker-compose). |
 
 ### Verify Prerequisites
 
@@ -130,14 +135,14 @@ docker ps | grep postgres
 │                                                                             │
 │  ┌─────────────┐                                                            │
 │  │ Faker Source│──┐                                                         │
-│  │  (users)    │  │     ┌─────────────┐    ┌─────────────┐                 │
-│  └─────────────┘  │     │   STAGING   │    │    MARTS    │                 │
-│  ┌─────────────┐  │     │   (views)   │    │  (tables)   │    ┌─────────┐  │
-│  │ Faker Source│──┼────▶│             │───▶│             │───▶│  GOLD   │  │
-│  │ (products)  │  │     │ • stg_users │    │ • dim_users │    │(tables) │  │
-│  └─────────────┘  │     │ • stg_prods │    │             │    │         │  │
-│  ┌─────────────┐  │     │ • stg_purch │    │             │    │ • gold_ │  │
-│  │ Faker Source│──┘     └─────────────┘    └─────────────┘    │  user_  │  │
+│  │  (users)    │  │     ┌─────────────┐    ┌──────────────┐                │
+│  └─────────────┘  │     │   STAGING   │    │    MARTS     │                │
+│  ┌─────────────┐  │     │   (views)   │    │   (tables)   │   ┌─────────┐  │
+│  │ Faker Source│──┼────▶│             │───▶│              │──▶│  GOLD   │  │
+│  │ (products)  │  │     │ • stg_users │    │ • dim_users  │   │(tables) │  │
+│  └─────────────┘  │     │ • stg_prods │    │ • dim_prods  │   │         │  │
+│  ┌─────────────┐  │     │ • stg_purch │    │              │   │ • gold_ │  │
+│  │ Faker Source│──┘     └─────────────┘    └──────────────┘   │  user_  │  │
 │  │ (purchases) │                                              │  purch  │  │
 │  └─────────────┘                                              └─────────┘  │
 │                                                                             │
@@ -171,9 +176,12 @@ FROM staging.stg_users;
 
 #### 📊 Marts Layer (dbt tables)
 ```sql
--- Aggregates purchase activity per user
+-- Dimension tables: users with aggregated metrics, products catalog
 SELECT user_id, full_name, total_purchases, total_spent, first_purchase_at
 FROM marts.dim_users;
+
+SELECT product_id, make, model, year, price
+FROM marts.dim_products;
 ```
 
 #### ⭐ Gold Layer (dbt tables)
@@ -196,7 +204,7 @@ FROM gold.gold_user_purchases;
 This automatically:
 - ✅ Creates database (`airbyte_raw`) and users
 - ✅ Creates dbt schemas (staging, marts, gold)
-- ✅ Starts Airbyte (6 containers)
+- ✅ Starts Airbyte (7 containers)
 - ✅ Starts Airflow + dbt-runner
 - ✅ Configures Airbyte source, destination, and connection
 - ✅ Sets Airflow variable `airbyte_connection_id`
@@ -281,7 +289,7 @@ docker exec dbt-runner dbt test
 ### Connect to Database
 
 ```bash
-docker exec -it $POSTGRES_CONTAINER psql -U $POSTGRES_USER -d airbyte_raw
+docker exec -it postgres psql -U postgres -d airbyte_raw
 ```
 
 ### Gold Layer Queries
@@ -339,22 +347,22 @@ ORDER BY revenue DESC;
 ```bash
 # Row counts across all layers
 echo "=== RAW LAYER ===" && \
-docker exec $POSTGRES_CONTAINER psql -U $POSTGRES_USER -d airbyte_raw -c \
+docker exec postgres psql -U postgres -d airbyte_raw -c \
   "SELECT '_airbyte_raw_users' as table_name, COUNT(*) FROM _airbyte_raw_users
    UNION ALL SELECT '_airbyte_raw_products', COUNT(*) FROM _airbyte_raw_products
    UNION ALL SELECT '_airbyte_raw_purchases', COUNT(*) FROM _airbyte_raw_purchases;"
 
 echo "=== STAGING LAYER ===" && \
-docker exec $POSTGRES_CONTAINER psql -U $POSTGRES_USER -d airbyte_raw -c \
+docker exec postgres psql -U postgres -d airbyte_raw -c \
   "SELECT user_id, full_name, occupation, city FROM staging.stg_users LIMIT 5;"
 
 echo "=== MARTS LAYER ===" && \
-docker exec $POSTGRES_CONTAINER psql -U $POSTGRES_USER -d airbyte_raw -c \
-  "SELECT user_id, full_name, total_purchases, total_spent FROM marts.dim_users;"
+docker exec postgres psql -U postgres -d airbyte_raw -c \
+  "SELECT user_id, full_name, total_purchases, total_spent FROM marts.dim_users LIMIT 10;"
 
 echo "=== GOLD LAYER ===" && \
-docker exec $POSTGRES_CONTAINER psql -U $POSTGRES_USER -d airbyte_raw -c \
-  "SELECT full_name, total_spent, avg_purchase_value, return_rate_pct FROM gold.gold_user_purchases;"
+docker exec postgres psql -U postgres -d airbyte_raw -c \
+  "SELECT full_name, total_spent, avg_purchase_value, return_rate_pct FROM gold.gold_user_purchases LIMIT 10;"
 ```
 
 ### Generate dbt Documentation
@@ -407,7 +415,7 @@ docker exec airflow airflow variables set airbyte_connection_id "<connection-id>
 
 **Fix:** Connect to `airbyte_raw`:
 ```bash
-docker exec -it $POSTGRES_CONTAINER psql -U $POSTGRES_USER -d airbyte_raw
+docker exec -it postgres psql -U postgres -d airbyte_raw
 ```
 
 ---
@@ -443,24 +451,27 @@ docker exec airflow airflow dags reserialize
 ```
 dbt-airbyte/
 ├── docker-compose.yaml          # dbt + Airflow containers
-├── docker-compose.airbyte.yaml  # Airbyte containers (6 services)
+├── docker-compose.airbyte.yaml  # Airbyte containers (7 services)
+├── .env.example                 # Environment template (auto-copied to .env)
 ├── airflow/
 │   └── dags/
 │       └── elt_pipeline.py      # Orchestration DAG
 ├── dbt_project/
 │   ├── dbt_project.yml          # dbt configuration
+│   ├── macros/
+│   │   └── generate_schema_name.sql  # Custom schema naming (bare names)
 │   └── models/
-│       ├── sources.yml          # Source definitions
+│       ├── sources.yml          # Source definitions (Airbyte raw tables)
 │       ├── staging/             # stg_users, stg_products, stg_purchases
-│       ├── marts/               # dim_users
-│       └── gold/                # gold_user_purchases
+│       ├── marts/               # dim_users, dim_products (+ schema.yml tests)
+│       └── gold/                # gold_user_purchases (+ schema.yml tests)
 ├── profiles/
 │   └── profiles.yml             # dbt connection profile
 ├── scripts/
-│   ├── setup.sh                 # One-click setup
+│   ├── setup.sh                 # One-click setup (--seed or full Airbyte)
 │   ├── run_pipeline.sh          # Pipeline runner with monitoring
 │   ├── configure_airbyte.py     # Airbyte auto-configuration
-│   └── seed_test_data.sql       # Sample data for testing
+│   └── seed_test_data.sql       # Sample data for --seed mode
 └── README.md
 ```
 

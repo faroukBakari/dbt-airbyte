@@ -105,11 +105,13 @@ load_user_env() {
     print_step "Loading user environment from .env..."
 
     if [[ ! -f "$PROJECT_DIR/.env" ]]; then
-        abort "Missing .env file.
-
-To fix, copy from .env.example and adjust values:
-  cp .env.example .env
-  nano .env"
+        if [[ -f "$PROJECT_DIR/.env.example" ]]; then
+            print_info ".env not found — copying from .env.example..."
+            cp "$PROJECT_DIR/.env.example" "$PROJECT_DIR/.env"
+            print_success ".env created from .env.example"
+        else
+            abort "Missing .env file and no .env.example to copy from."
+        fi
     fi
 
     # Source .env and export all variables
@@ -190,43 +192,63 @@ check_postgres_container() {
     print_step "Checking PostgreSQL container ($POSTGRES_CONTAINER)..."
 
     if ! docker ps --format '{{.Names}}' | grep -q "^${POSTGRES_CONTAINER}$"; then
-        abort "Container '$POSTGRES_CONTAINER' is not running.
-
-       Expected: A running PostgreSQL container named '$POSTGRES_CONTAINER'
-
-       To fix:
-         - Start your existing PostgreSQL container, OR
-         - Create the container manually:
-           docker run -d --name $POSTGRES_CONTAINER \\
-             -e POSTGRES_PASSWORD=password \\
-             -p 5432:5432 \\
-             --network $DOCKER_NETWORK \\
-             postgres:16-alpine"
+        # Check if container exists but is stopped
+        if docker ps -a --format '{{.Names}}' | grep -q "^${POSTGRES_CONTAINER}$"; then
+            print_info "Container '$POSTGRES_CONTAINER' exists but is stopped — starting it..."
+            if ! docker start "$POSTGRES_CONTAINER" &> /dev/null; then
+                abort "Failed to start existing container '$POSTGRES_CONTAINER'"
+            fi
+        else
+            print_info "PostgreSQL container not found — creating '$POSTGRES_CONTAINER'..."
+            if ! docker run -d --name "$POSTGRES_CONTAINER" \
+                -e POSTGRES_PASSWORD=password \
+                -p "${POSTGRES_PORT}:5432" \
+                --network "$DOCKER_NETWORK" \
+                postgres:16-alpine 2>&1; then
+                abort "Failed to create PostgreSQL container"
+            fi
+            print_success "PostgreSQL container '$POSTGRES_CONTAINER' created"
+        fi
     fi
 
-    # Check if postgres is accepting connections
-    if ! docker exec "$POSTGRES_CONTAINER" pg_isready -U "$POSTGRES_USER" &> /dev/null; then
-        abort "PostgreSQL in '$POSTGRES_CONTAINER' is not ready to accept connections.
+    # Ensure container is on the right network
+    if ! docker inspect "$POSTGRES_CONTAINER" --format '{{json .NetworkSettings.Networks}}' 2>/dev/null | grep -q "\"${DOCKER_NETWORK}\""; then
+        print_info "Connecting '$POSTGRES_CONTAINER' to network '$DOCKER_NETWORK'..."
+        docker network connect "$DOCKER_NETWORK" "$POSTGRES_CONTAINER" 2>/dev/null || true
+    fi
+
+    # Wait for postgres to accept connections
+    print_info "Waiting for PostgreSQL to accept connections..."
+    local attempt=1
+    local max_attempts=15
+    while [[ $attempt -le $max_attempts ]]; do
+        if docker exec "$POSTGRES_CONTAINER" pg_isready -U "$POSTGRES_USER" &> /dev/null; then
+            print_success "PostgreSQL container is running and healthy"
+            return 0
+        fi
+        printf "  Waiting for PostgreSQL... (%d/%d)\r" "$attempt" "$max_attempts"
+        sleep 2
+        ((attempt++))
+    done
+
+    abort "PostgreSQL in '$POSTGRES_CONTAINER' is not ready to accept connections.
 
        The container is running but PostgreSQL is not responding.
-       Wait a few seconds and try again, or check logs:
-         docker logs $POSTGRES_CONTAINER"
-    fi
-
-    print_success "PostgreSQL container is running and healthy"
+       Check logs: docker logs $POSTGRES_CONTAINER"
 }
 
 check_docker_network() {
     print_step "Checking Docker network ($DOCKER_NETWORK)..."
 
     if ! docker network ls --format '{{.Name}}' | grep -q "^${DOCKER_NETWORK}$"; then
-        abort "Docker network '$DOCKER_NETWORK' does not exist.
-
-       To fix:
-         docker network create $DOCKER_NETWORK"
+        print_info "Network '$DOCKER_NETWORK' not found — creating it..."
+        if ! docker network create "$DOCKER_NETWORK" &> /dev/null; then
+            abort "Failed to create Docker network '$DOCKER_NETWORK'"
+        fi
+        print_success "Docker network '$DOCKER_NETWORK' created"
+    else
+        print_success "Docker network exists"
     fi
-
-    print_success "Docker network exists"
 }
 
 check_database_exists() {
@@ -458,7 +480,7 @@ wait_for_airbyte() {
 
     # Wait for Airbyte API to respond (with basic auth)
     # 120 attempts * 2 seconds = 4 minutes max
-    if check_url_with_retry "$AIRBYTE_URL" "Airbyte" 120 "airbyte:password"; then
+    if check_url_with_retry "$AIRBYTE_URL" "Airbyte" 120 "${GEN_AIRBYTE_WEB_USER}:${GEN_AIRBYTE_WEB_PASSWORD}"; then
         echo ""
         print_success "Airbyte is responding"
         return 0
@@ -587,14 +609,19 @@ seed_test_data() {
     print_step "Seeding test data into airbyte_raw..."
 
     print_info "Running seed_test_data.sql..."
-    if ! docker exec -i "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -d airbyte_raw < "$SCRIPT_DIR/seed_test_data.sql" 2>&1; then
+    if ! docker exec -i "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -d "${GEN_AIRBYTE_DB_NAME}" < "$SCRIPT_DIR/seed_test_data.sql" 2>&1; then
         abort "Failed to seed test data.
 
-       Check that airbyte_raw database exists and tables can be created."
+       Check that ${GEN_AIRBYTE_DB_NAME} database exists and tables can be created."
     fi
 
+    # Grant dbt_user read access to the newly created seed tables
+    print_info "Granting ${GEN_DBT_USER} read access to seeded tables..."
+    docker exec "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -d "${GEN_AIRBYTE_DB_NAME}" -c \
+        "GRANT SELECT ON ALL TABLES IN SCHEMA public TO ${GEN_DBT_USER};" 2>&1 || true
+
     # Validate data was inserted
-    local user_count=$(docker exec "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -d airbyte_raw -tAc "SELECT COUNT(*) FROM _airbyte_raw_users" 2>/dev/null || echo "0")
+    local user_count=$(docker exec "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -d "${GEN_AIRBYTE_DB_NAME}" -tAc "SELECT COUNT(*) FROM _airbyte_raw_users" 2>/dev/null || echo "0")
 
     if [[ "$user_count" -lt 1 ]]; then
         abort "Test data was not inserted correctly. Expected users in _airbyte_raw_users table."
@@ -617,7 +644,7 @@ check_all_services() {
     # Check Airbyte (if enabled)
     if [[ "$with_airbyte" == "true" ]]; then
         print_info "Checking Airbyte UI..."
-        if check_url_responding "$AIRBYTE_URL" 5 "airbyte:password"; then
+        if check_url_responding "$AIRBYTE_URL" 5 "${GEN_AIRBYTE_WEB_USER}:${GEN_AIRBYTE_WEB_PASSWORD}"; then
             AIRBYTE_STATUS="${GREEN}● ONLINE${NC}"
         else
             AIRBYTE_STATUS="${YELLOW}○ STARTING${NC}"
