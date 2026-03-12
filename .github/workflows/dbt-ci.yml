@@ -47,10 +47,6 @@ jobs:
       - name: Install dbt
         run: pip install dbt-postgres==1.9.0
 
-      - name: dbt deps
-        working-directory: dbt_project
-        run: dbt deps --profiles-dir ../profiles --target ci
-
       # dbt parse is a local-only compilation check — no database connection needed.
       # It validates Jinja rendering, ref/source resolution, and YAML schema correctness.
       - name: dbt parse
