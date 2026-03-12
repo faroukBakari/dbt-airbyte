@@ -2,10 +2,10 @@
 
 A minimalistic **Modern Data Stack** proof-of-concept demonstrating end-to-end ELT (Extract, Load, Transform) using:
 
-- **Airbyte** — Data extraction & loading (EL)
-- **dbt Core** — Data transformation (T)
-- **Airflow** — Pipeline orchestration
-- **PostgreSQL** — Data warehouse (external container)
+- **Airbyte** v0.50.5 — Data extraction & loading (EL)
+- **dbt Core** v1.9.0 — Data transformation (T)
+- **Airflow** v2.8.1 — Pipeline orchestration
+- **PostgreSQL** 15 — Data warehouse (external container)
 
 > 🎯 **Goal**: Ingest fake e-commerce data (users, products, purchases), transform it through staging → marts → gold layers, and produce analytics-ready tables.
 
@@ -29,8 +29,11 @@ A minimalistic **Modern Data Stack** proof-of-concept demonstrating end-to-end E
 - [Running the Pipeline](#-running-the-pipeline)
 - [Query Examples](#-query-examples)
 - [Visualizing Results](#-visualizing-results)
+- [Data Quality](#-data-quality)
 - [Troubleshooting](#-troubleshooting)
+- [Known Limitations](#-known-limitations)
 - [Extending to Production](#-extending-to-production)
+- [Roadmap](#-roadmap)
 - [Resources](#-resources)
 
 ---
@@ -73,8 +76,18 @@ docker exec -it postgres psql -U postgres -d airbyte_raw \
 | Requirement | Version | Notes |
 |-------------|---------|-------|
 | Docker | 20.10+ | With Docker Compose v2 |
-| PostgreSQL Container | Any | External container on port 5432 (auto-created by `setup.sh` if absent) |
+| PostgreSQL Container | 15+ | External container on port 5432 (auto-created by `setup.sh` if absent) |
 | Docker Socket | — | Airflow uses `docker exec` to run dbt and seed commands. The Docker socket must be accessible (mounted automatically by docker-compose). |
+
+### Component Versions
+
+| Component | Version | Image / Package |
+|-----------|---------|-----------------|
+| dbt Core | 1.9.0 | `ghcr.io/dbt-labs/dbt-postgres:1.9.0` |
+| Airflow | 2.8.1 | `apache/airflow:2.8.1-python3.11` |
+| Airbyte OSS | 0.50.5 | `docker-compose.airbyte.yaml` (8 services) |
+| PostgreSQL | 15 | `postgres:15` (external container) |
+| Python (Airflow) | 3.11 | Bundled in Airflow image |
 
 ### Verify Prerequisites
 
@@ -430,6 +443,61 @@ open http://localhost:8081
 
 ---
 
+## 🛡️ Data Quality
+
+### Test Coverage
+
+The project includes **44 dbt tests** across all layers, validating structural integrity and referential consistency.
+
+| Layer | Model | Tests | What's Validated |
+|-------|-------|-------|------------------|
+| **Sources** | `_airbyte_raw_*` (3 tables) | 3 | `_airbyte_data` is not null |
+| **Staging** | `stg_users` | 4 | `user_id` unique + not null, `email` unique + not null, `full_name` not null, `age` not null |
+| **Staging** | `stg_products` | 4 | `product_id` unique + not null, `make`/`model`/`price` not null |
+| **Staging** | `stg_purchases` | 5 | `purchase_id` unique + not null, `user_id` FK → `stg_users`, `product_id` FK → `stg_products` |
+| **Marts** | `dim_users` | 6 | `user_id` unique + not null + FK → `stg_users`, `full_name`/`email`/`total_purchases`/`total_spent` not null |
+| **Marts** | `dim_products` | 5 | `product_id` unique + not null + FK → `stg_products`, `make`/`model`/`price` not null |
+| **Gold** | `gold_user_purchases` | 7 | `user_id` unique + not null + FK → `dim_users`, `email` unique + not null, all metrics not null |
+| | | **44** | |
+
+### Test Types Used
+
+| Type | Count | Purpose |
+|------|-------|---------|
+| `not_null` | 24 | No missing values in critical columns |
+| `unique` | 11 | No duplicate keys or identifiers |
+| `relationships` | 6 | Referential integrity across layers (staging → marts → gold) |
+| Source tests | 3 | Raw data has content |
+
+### Running Tests
+
+```bash
+# Run all tests
+docker exec dbt-runner dbt test
+
+# Run tests for a specific layer
+docker exec dbt-runner dbt test --select staging
+docker exec dbt-runner dbt test --select marts
+docker exec dbt-runner dbt test --select gold
+
+# Run tests for a specific model
+docker exec dbt-runner dbt test --select dim_users
+```
+
+### Seed Data (--seed mode)
+
+When running with `./scripts/setup.sh --seed`, the pipeline uses deterministic test data:
+
+| Entity | Count | Details |
+|--------|-------|---------|
+| Users | 12 | Across 6 countries (US, UK, DE, JP, BR, AU), varied ages and occupations |
+| Products | 8 | Cars with varied price tiers ($22K–$85K), multiple manufacturers |
+| Purchases | 35 | Mix of active buyers and returners, varied spending patterns |
+
+All 12 users have at least one purchase, so every user appears in the gold output. UUIDs are generated with `gen_random_uuid()` (PostgreSQL `pgcrypto` extension, auto-created).
+
+---
+
 ## 🔍 Troubleshooting
 
 ### Airbyte Connection Failed
@@ -524,8 +592,23 @@ dbt-airbyte/
 │   ├── run_pipeline.sh          # Pipeline runner with monitoring
 │   ├── configure_airbyte.py     # Airbyte auto-configuration
 │   └── seed_test_data.sql       # Sample data for --seed mode
+├── docs/
+│   └── ROADMAP.md               # CI & quality maturity roadmap
 └── README.md
 ```
+
+---
+
+## ⚠️ Known Limitations
+
+| Limitation | Impact | Mitigation |
+|------------|--------|------------|
+| **PostgreSQL-specific SQL** | Gold model uses `DISTINCT ON` (Postgres-only syntax). Cannot port directly to Snowflake/BigQuery/Redshift. | Rewrite with `ROW_NUMBER()` window function for warehouse portability. |
+| **Airbyte version lock** | Connector definition IDs in `configure_airbyte.py` are hardcoded for Airbyte OSS v0.50.5. Different versions use different UUIDs. | Re-inspect via `/api/v1/*Definitions/list` after upgrading Airbyte. |
+| **No `description` in `dbt_project.yml`** | dbt 1.9 rejects project-level `description` field (`Additional properties are not allowed`). Supported in dbt 1.10+. | Descriptions live in individual `schema.yml` files instead. |
+| **No Docker images past dbt 1.9** | `ghcr.io/dbt-labs/dbt-postgres` registry tops out at `1.9.0`. Upgrading to 1.10+ requires a custom Dockerfile. | Build from `python:3.12-slim` + `pip install dbt-core dbt-postgres`. |
+| **Hardcoded credentials** | POC uses plaintext credentials (`dbt_password`, `airbyte_password`). Not suitable for production. | Use a secrets manager (Vault, AWS Secrets Manager). |
+| **full_refresh only** | Every sync replaces all data. Acceptable for demo-scale; unsustainable for large datasets. | Switch to incremental + dedup sync mode. |
 
 ---
 
@@ -535,9 +618,21 @@ This POC is intentionally simple. Here's what a production deployment would add:
 
 - **Incremental syncs** — switch from full_refresh to incremental + dedup for large datasets
 - **Secrets management** — replace hardcoded POC credentials with a vault (e.g., HashiCorp Vault, AWS Secrets Manager)
-- **CI/CD** — add dbt slim CI (`dbt test --select state:modified+`) and Airflow DAG validation
+- **CI/CD** — add dbt slim CI (`dbt build --select state:modified+`) and Airflow DAG validation
 - **Monitoring** — add Airflow alerting, dbt source freshness checks, data observability tooling
 - **Scaling** — swap PostgreSQL for a cloud warehouse (Snowflake, BigQuery, Redshift); Airbyte Cloud for managed connectors
+
+---
+
+## 🗺️ Roadmap
+
+See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the full implementation roadmap covering:
+
+1. **Testing Depth** — `dbt build`, unit tests, source freshness, model contracts
+2. **Data Observability** — Elementary (dbt-native quality dashboard with anomaly detection)
+3. **SQL Quality Gates** — SQLFluff linting + pre-commit hooks
+4. **CI/CD Pipeline** — GitHub Actions with slim CI (`state:modified+`)
+5. **Governance** — Exposures, groups, and access control for multi-team collaboration
 
 ---
 
