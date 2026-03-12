@@ -10,3 +10,12 @@ dbt_airbyte_poc:
       dbname: airbyte_raw         # Connect to source database (cross-db queries not supported)
       schema: public              # Default schema (models override with staging/marts/gold)
       threads: 2                 # Conservative for Docker resource constraints; increase if host allows
+    ci:
+      type: postgres
+      host: localhost
+      port: 5432
+      user: ci_user
+      password: ci_password
+      dbname: ci_test
+      schema: public
+      threads: 2

@@ -1,30 +1,30 @@
 -- Mart: User dimension with purchase activity summary
-with users as (
-    select * from {{ ref('stg_users') }}
+WITH users AS (
+    SELECT * FROM {{ ref('stg_users') }}
 ),
 
-purchases as (
-    select * from {{ ref('stg_purchases') }}
+purchases AS (
+    SELECT * FROM {{ ref('stg_purchases') }}
 ),
 
-products as (
-    select * from {{ ref('stg_products') }}
+products AS (
+    SELECT * FROM {{ ref('stg_products') }}
 ),
 
-user_purchases as (
-    select
+user_purchases AS (
+    SELECT
         p.user_id,
-        count(*) as total_purchases,
-        sum(pr.price) as total_spent,
-        count(case when p.returned_at is not null then 1 end) as total_returns,
-        min(p.purchased_at) as first_purchase_at,
-        max(p.purchased_at) as last_purchase_at
-    from purchases p
-    left join products pr on p.product_id = pr.product_id
-    group by p.user_id
+        COUNT(*) AS total_purchases,
+        SUM(pr.price) AS total_spent,
+        COUNT(CASE WHEN p.returned_at IS NOT NULL THEN 1 END) AS total_returns,
+        MIN(p.purchased_at) AS first_purchase_at,
+        MAX(p.purchased_at) AS last_purchase_at
+    FROM purchases AS p
+    LEFT JOIN products AS pr ON p.product_id = pr.product_id
+    GROUP BY p.user_id
 )
 
-select
+SELECT
     u.user_id,
     u.full_name,
     u.email,
@@ -34,10 +34,10 @@ select
     u.country_code,
     u.age,
     u.created_at,
-    coalesce(up.total_purchases, 0) as total_purchases,
-    coalesce(up.total_spent, 0) as total_spent,
-    coalesce(up.total_returns, 0) as total_returns,
+    COALESCE(up.total_purchases, 0) AS total_purchases,
+    COALESCE(up.total_spent, 0) AS total_spent,
+    COALESCE(up.total_returns, 0) AS total_returns,
     up.first_purchase_at,
     up.last_purchase_at
-from users u
-left join user_purchases up on u.user_id = up.user_id
+FROM users AS u
+LEFT JOIN user_purchases AS up ON u.user_id = up.user_id

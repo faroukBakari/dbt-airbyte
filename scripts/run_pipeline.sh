@@ -57,12 +57,12 @@ print_header() {
 
 cleanup_existing_runs() {
     echo -e "${YELLOW}▶ Checking for existing DAG runs...${NC}"
-    
+
     # Get count of non-terminal runs (queued, running)
     local active_runs=0
     local dag_exists
     dag_exists=$(docker exec airflow airflow dags list -o plain 2>/dev/null | grep -c "$DAG_ID" || true)
-    
+
     if [[ "$dag_exists" -gt 0 ]]; then
         # Check for running DAG runs
         local running_count
@@ -70,13 +70,13 @@ cleanup_existing_runs() {
             | grep -cE '\srunning\s' || true)
         active_runs=${running_count:-0}
     fi
-    
+
     if [[ "$active_runs" -gt 0 ]]; then
         echo -e "  Found active run(s). Cleaning up..."
-        
+
         # Delete the entire DAG (removes all run history) and let it re-parse
         docker exec airflow airflow dags delete "$DAG_ID" -y &>/dev/null || true
-        
+
         # Wait for DAG to be re-parsed (with longer timeout)
         echo -e "  ${GRAY}Waiting for DAG to re-parse...${NC}"
         local wait_count=0
@@ -87,12 +87,12 @@ cleanup_existing_runs() {
             sleep 1
             ((wait_count++))
         done
-        
+
         echo -e "${GREEN}✓ Cleaned up existing runs${NC}"
     else
         echo -e "${GREEN}✓ No active runs found${NC}"
     fi
-    
+
     # Ensure DAG is unpaused (with retry to handle race condition)
     echo -e "${YELLOW}▶ Ensuring DAG is unpaused...${NC}"
     local unpause_attempts=0
@@ -112,20 +112,20 @@ cleanup_existing_runs() {
 
 trigger_dag() {
     echo -e "${YELLOW}▶ Triggering DAG: ${DAG_ID}${NC}"
-    
+
     # Trigger and capture output (filter out log lines, keep only JSON)
     local output
     output=$(docker exec airflow airflow dags trigger "$DAG_ID" -o json 2>/dev/null | grep '^\[{')
-    
+
     # Extract run_id from JSON output
     RUN_ID=$(echo "$output" | python3 -c "import sys,json; data=json.load(sys.stdin); print(data[0]['dag_run_id'])" 2>/dev/null)
-    
+
     if [[ -z "$RUN_ID" ]]; then
         echo -e "${RED}✗ Failed to trigger DAG${NC}"
         echo "$output"
         exit 1
     fi
-    
+
     echo -e "${GREEN}✓ DAG triggered successfully${NC}"
     echo -e "  Run ID: ${CYAN}${RUN_ID}${NC}"
     echo ""
@@ -142,29 +142,29 @@ get_dag_state() {
 print_task_table() {
     local states="$1"
     local elapsed="$2"
-    
+
     print_header
-    
+
     echo -e "  ${GRAY}Run ID:${NC} ${RUN_ID}"
     echo -e "  ${GRAY}Elapsed:${NC} ${elapsed}s"
     echo ""
-    
+
     echo "┌──────────────────────────┬───────────────────────┬──────────────────────────────────┐"
     echo "│ Task                     │ State                 │ Duration                         │"
     echo "├──────────────────────────┼───────────────────────┼──────────────────────────────────┤"
-    
+
     echo "$states" | while IFS='|' read -r dag_id exec_date task_id state start_date end_date; do
         # Clean up whitespace
         task_id=$(echo "$task_id" | xargs)
         state=$(echo "$state" | xargs)
         start_date=$(echo "$start_date" | xargs)
         end_date=$(echo "$end_date" | xargs)
-        
+
         # Skip header lines
         [[ "$task_id" == "task_id" ]] && continue
         [[ "$task_id" == *"="* ]] && continue
         [[ -z "$task_id" ]] && continue
-        
+
         # Calculate duration
         local duration="-"
         if [[ -n "$start_date" && "$start_date" != "None" ]]; then
@@ -186,7 +186,7 @@ print_task_table() {
                 fi
             fi
         fi
-        
+
         # Get colored state (need to handle in subshell)
         local state_display
         case "$state" in
@@ -199,37 +199,37 @@ print_task_table() {
             None|"")  state_display="${GRAY}· pending${NC}" ;;
             *)        state_display="${GRAY}? $state${NC}" ;;
         esac
-        
+
         # Print row (accounting for ANSI codes in state)
         printf "│ %-24s │ %-32b │ %-32s │\n" "$task_id" "$state_display" "$duration"
     done
-    
+
     echo "└──────────────────────────┴───────────────────────┴──────────────────────────────────┘"
     echo ""
 }
 
 check_completion() {
     local states="$1"
-    
+
     # Check for any failed tasks
     if echo "$states" | grep -qE '\|\s*(failed|upstream_failed)\s*\|'; then
         return 1  # Failed
     fi
-    
+
     # Check if all tasks are done (no running, queued, or pending)
     if echo "$states" | grep -qE '\|\s*(running|queued)\s*\|'; then
         return 2  # Still running
     fi
-    
+
     # Check if pipeline_complete succeeded (fixed: was broken pipe)
     if echo "$states" | grep 'pipeline_complete' | grep -qE '\|\s*success\s*\|'; then
         return 0  # Success
     fi
-    
+
     # Check DAG state directly
     local dag_state
     dag_state=$(get_dag_state)
-    
+
     case "$dag_state" in
         success) return 0 ;;
         failed)  return 1 ;;
@@ -248,42 +248,42 @@ main() {
     echo -e "${BOLD}ELT Pipeline Runner${NC}"
     echo -e "${GRAY}━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
-    
+
     # Check if Airflow is running
     if ! docker exec airflow airflow version &>/dev/null; then
         echo -e "${RED}✗ Airflow container is not running${NC}"
         echo "  Start it with: docker compose up -d"
         exit 1
     fi
-    
+
     # Clean up any existing runs first
     cleanup_existing_runs
-    
+
     # Trigger the DAG
     trigger_dag
-    
+
     # Wait a moment for tasks to be scheduled
     sleep 2
-    
+
     # Monitor loop
     local start_time=$(date +%s)
     local elapsed=0
-    
+
     while [[ $elapsed -lt $MAX_WAIT ]]; do
         # Get current states
         local states
         states=$(get_task_states)
-        
+
         # Calculate elapsed time
         elapsed=$(($(date +%s) - start_time))
-        
+
         # Print the table
         print_task_table "$states" "$elapsed"
-        
+
         # Check completion
         check_completion "$states"
         local result=$?
-        
+
         if [[ $result -eq 0 ]]; then
             echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
             echo -e "${GREEN}  ✓ Pipeline completed successfully!${NC}"
@@ -300,11 +300,11 @@ main() {
             echo ""
             exit 1
         fi
-        
+
         # Still running - wait and poll again
         sleep $POLL_INTERVAL
     done
-    
+
     echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "${YELLOW}  ⚠ Timeout waiting for pipeline (${MAX_WAIT}s)${NC}"
     echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"

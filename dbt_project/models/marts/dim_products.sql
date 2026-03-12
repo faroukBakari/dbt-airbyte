@@ -1,22 +1,22 @@
 -- Mart: Product dimension with sales metrics
-with products as (
-    select * from {{ ref('stg_products') }}
+WITH products AS (
+    SELECT * FROM {{ ref('stg_products') }}
 ),
 
-purchases as (
-    select * from {{ ref('stg_purchases') }}
+purchases AS (
+    SELECT * FROM {{ ref('stg_purchases') }}
 ),
 
-product_sales as (
-    select
+product_sales AS (
+    SELECT
         product_id,
-        count(*) as times_sold,
-        count(case when returned_at is not null then 1 end) as times_returned
-    from purchases
-    group by product_id
+        COUNT(*) AS times_sold,
+        COUNT(CASE WHEN returned_at IS NOT NULL THEN 1 END) AS times_returned
+    FROM purchases
+    GROUP BY product_id
 )
 
-select
+SELECT
     p.product_id,
     p.make,
     p.model,
@@ -24,7 +24,7 @@ select
     p.price,
     p.created_at,
     p.loaded_at,
-    coalesce(ps.times_sold, 0) as times_sold,
-    coalesce(ps.times_returned, 0) as times_returned
-from products p
-left join product_sales ps on p.product_id = ps.product_id
+    COALESCE(ps.times_sold, 0) AS times_sold,
+    COALESCE(ps.times_returned, 0) AS times_returned
+FROM products AS p
+LEFT JOIN product_sales AS ps ON p.product_id = ps.product_id

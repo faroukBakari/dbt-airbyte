@@ -1,17 +1,17 @@
 -- Staging model: Clean and normalize raw purchase data from Airbyte Sample Data
-with raw_purchases as (
-    select
-        _airbyte_data::jsonb as data,
-        _airbyte_emitted_at as loaded_at
-    from {{ source('airbyte_raw', '_airbyte_raw_purchases') }}
+WITH raw_purchases AS (
+    SELECT
+        _airbyte_data::jsonb AS data,
+        _airbyte_emitted_at AS loaded_at
+    FROM {{ source('airbyte_raw', '_airbyte_raw_purchases') }}
 )
 
-select
-    (data->>'id')::bigint as purchase_id,
-    (data->>'user_id')::bigint as user_id,
-    (data->>'product_id')::bigint as product_id,
-    (data->>'purchased_at')::timestamptz as purchased_at,
-    (data->>'added_to_cart_at')::timestamptz as added_to_cart_at,
-    (data->>'returned_at')::timestamptz as returned_at,
+SELECT
+    (data ->> 'id')::bigint AS purchase_id,
+    (data ->> 'user_id')::bigint AS user_id,
+    (data ->> 'product_id')::bigint AS product_id,
+    (data ->> 'purchased_at')::timestamptz AS purchased_at,
+    (data ->> 'added_to_cart_at')::timestamptz AS added_to_cart_at,
+    (data ->> 'returned_at')::timestamptz AS returned_at,
     loaded_at
-from raw_purchases
+FROM raw_purchases

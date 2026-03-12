@@ -554,7 +554,7 @@ ORDER BY return_rate_pct DESC;
 
 #### Customer Lifetime Value
 ```sql
-SELECT 
+SELECT
     full_name,
     total_spent,
     avg_purchase_value,

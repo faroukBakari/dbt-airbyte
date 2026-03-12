@@ -1,0 +1,64 @@
+name: dbt CI
+
+on:
+  pull_request:
+    paths:
+      - 'dbt_project/**'
+      - 'profiles/**'
+      - '.sqlfluff'
+  push:
+    branches: [master]
+    paths:
+      - 'dbt_project/**'
+      - 'profiles/**'
+      - '.sqlfluff'
+
+jobs:
+  lint:
+    name: SQL lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install SQLFluff
+        run: pip install sqlfluff==3.3.0
+
+      - name: SQLFluff lint
+        run: sqlfluff lint dbt_project/models/
+
+  compile:
+    name: dbt compile check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dbt
+        run: pip install dbt-postgres==1.9.0
+
+      - name: dbt deps
+        working-directory: dbt_project
+        run: dbt deps --profiles-dir ../profiles --target ci
+
+      # dbt parse is a local-only compilation check — no database connection needed.
+      # It validates Jinja rendering, ref/source resolution, and YAML schema correctness.
+      - name: dbt parse
+        working-directory: dbt_project
+        run: dbt parse --profiles-dir ../profiles --target ci
+
+      # TODO: Add seed-based dbt build once CI seed fixtures exist.
+      # Without Airbyte raw tables in CI Postgres, dbt build would fail on
+      # source queries. dbt parse validates compilation; SQLFluff covers
+      # SQL quality. A future PR should add seed CSVs + source overrides
+      # and re-introduce the Postgres service container for full integration testing.
