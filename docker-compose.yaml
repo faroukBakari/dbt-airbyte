@@ -1,6 +1,6 @@
 services:
   dbt:
-    image: ghcr.io/dbt-labs/dbt-postgres:1.7.4
+    image: ghcr.io/dbt-labs/dbt-postgres:1.9.0
     container_name: dbt-runner
     working_dir: /usr/app/dbt
     # .env = user config (POSTGRES_*, DOCKER_NETWORK)
