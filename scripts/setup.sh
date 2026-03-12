@@ -25,6 +25,8 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 # =============================================================================
 # GENERATED VARIABLES (written to .env.generated)
+# POC defaults — change here to customize credentials for all services.
+# These are NOT production secrets; they're baked-in constants for local dev.
 # =============================================================================
 GEN_DBT_USER="dbt_user"
 GEN_DBT_PASSWORD="dbt_password"

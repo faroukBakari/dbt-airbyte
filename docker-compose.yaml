@@ -3,6 +3,8 @@ services:
     image: ghcr.io/dbt-labs/dbt-postgres:1.7.4
     container_name: dbt-runner
     working_dir: /usr/app/dbt
+    # .env = user config (POSTGRES_*, DOCKER_NETWORK)
+    # .env.generated = auto-created by setup.sh (credentials, derived vars)
     env_file:
       - .env
       - .env.generated
@@ -21,6 +23,8 @@ services:
       - .env
       - .env.generated
     environment:
+      - AIRFLOW__WEBSERVER__SECRET_KEY=poc-demo-secret-key-not-for-production
+      - DOCKER_API_VERSION=1.44
       - AIRFLOW__CORE__LOAD_EXAMPLES=false
       - AIRFLOW__CORE__EXECUTOR=SequentialExecutor
       - AIRFLOW__WEBSERVER__EXPOSE_CONFIG=true

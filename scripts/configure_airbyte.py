@@ -32,7 +32,9 @@ AIRBYTE_URL = os.getenv("AIRBYTE_URL", "http://localhost:8000/api/v1")
 AIRBYTE_USERNAME = os.getenv("AIRBYTE_WEB_USER", "airbyte")
 AIRBYTE_PASSWORD = os.getenv("AIRBYTE_WEB_PASSWORD", "password")
 
-# Source/Destination Definition IDs (from Airbyte API inspection)
+# Source/Destination Definition IDs (from Airbyte API inspection).
+# Locked to Airbyte OSS v0.50.5 — these UUIDs are version-specific and will
+# break if Airbyte is upgraded. Re-inspect via /api/v1/*Definitions/list.
 FAKER_SOURCE_DEF_ID = "dfd88b22-b603-4c3d-aad7-3701784586b1"
 POSTGRES_DEST_DEF_ID = "25c5221d-dce2-4163-ade9-739ef790f503"
 
