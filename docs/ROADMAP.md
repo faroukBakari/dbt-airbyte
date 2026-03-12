@@ -19,7 +19,8 @@ This roadmap builds on the current state: Airbyte + dbt 1.9 + Airflow + PostgreS
 | Exposures | 3 declared downstream consumers (dashboard, analysis, ML pipeline) |
 | Orchestration | Airflow DAG with branch logic (Airbyte vs seed mode) |
 | Documentation | Column descriptions in all schema.yml files, dbt docs generate |
-| CI/CD | None |
+| SQL linting | SQLFluff (UPPER keywords, explicit aliases, spaced JSON ops) + pre-commit hooks |
+| CI/CD | GitHub Actions — 2 parallel jobs: SQLFluff lint + dbt parse (compile check) |
 
 ---
 
@@ -592,17 +593,17 @@ Phase 2 (Observability)         ← Highest demo impact
 
 Phase 3 (SQL Quality Gates)     ← Team hygiene
 │
-├─ 3.1  SQLFluff                    ⏳ TODO   [config + initial fix]
-└─ 3.2  Pre-commit hooks            ⏳ TODO   [config only]
+├─ 3.1  SQLFluff                    ✅ DONE   [UPPER keywords, explicit AS, spaced JSON ops]
+└─ 3.2  Pre-commit hooks            ✅ DONE   [SQLFluff lint/fix + YAML/whitespace/EOF]
                                     ─────
-                                    ~1.5 hr
+                                    Completed
 
 Phase 4 (CI/CD)                 ← Team readiness
 │
-├─ 4.1  GitHub Actions slim CI      ⏳ TODO   [workflow + CI profile]
-└─ 4.2  dbt compile check           ⏳ TODO   [1 CI step]
+├─ 4.1  GitHub Actions CI           ✅ DONE   [2 parallel jobs: SQL lint + dbt parse]
+└─ 4.2  dbt compile check           ✅ DONE   [dbt parse in CI — no DB required]
                                     ─────
-                                    ~3.5 hr
+                                    Completed (slim CI with dbt build deferred — needs seed fixtures)
 
 Phase 5 (Governance)            ← Multi-team maturity
 │
@@ -618,7 +619,7 @@ Phase 6 (Visualization)         ← Data storytelling
                                     ─────
                                     6.2: ~3 hr (3 Docker services + dbt YAML metrics)
 
-Total remaining effort: ~10 hours (excl. backlog)
+Total remaining effort: ~5 hours (excl. backlog)
 ```
 
 ---
