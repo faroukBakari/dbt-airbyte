@@ -9,10 +9,15 @@ models:
         tests:
           - unique
           - not_null
+          - relationships:
+              to: ref('dim_users')
+              field: user_id
       - name: full_name
+        description: "User's display name"
         tests:
           - not_null
       - name: email
+        description: "User's email address"
         tests:
           - unique
           - not_null
@@ -21,11 +26,14 @@ models:
         tests:
           - not_null
       - name: total_spent
+        description: Lifetime spend (USD)
         tests:
           - not_null
       - name: avg_purchase_value
+        description: Average spend per transaction (total_spent / total_purchases)
         tests:
           - not_null
       - name: return_rate_pct
+        description: Percentage of purchases returned (total_returns / total_purchases * 100)
         tests:
           - not_null

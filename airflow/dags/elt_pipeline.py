@@ -11,6 +11,24 @@ Orchestrates the full ELT workflow:
 Modes:
 - With Airbyte: Triggers sync via API (requires AIRBYTE_CONNECTION_ID variable)
 - Without Airbyte: Uses seed_test_data.sql as fallback
+
+Task Graph::
+
+  check_data_source_mode
+    ├── trigger_airbyte_sync ──┐
+    └── seed_raw_data ─────────┤
+                               ▼
+                          data_loaded
+                               │
+                    dbt_run_staging
+                               │
+                     dbt_run_marts
+                               │
+                      dbt_run_gold
+                               │
+                        dbt_test
+                               │
+                    pipeline_complete
 """
 
 import os
@@ -176,6 +194,7 @@ with DAG(
         ### dbt Marts
         Builds business-focused dimension tables.
         - dim_users (with purchase aggregates)
+        - dim_products (product catalog with sales metrics)
         """,
     )
 

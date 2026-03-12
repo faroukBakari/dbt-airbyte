@@ -1,0 +1,57 @@
+version: 2
+
+models:
+  - name: stg_users
+    description: Cleaned user profiles extracted from Airbyte raw JSON
+    columns:
+      - name: user_id
+        description: Unique user identifier from source
+        tests: [unique, not_null]
+      - name: email
+        description: "User's email address"
+        tests: [unique, not_null]
+      - name: full_name
+        description: "User's full display name"
+        tests: [not_null]
+      - name: age
+        description: "User's age in years"
+        tests: [not_null]
+
+  - name: stg_products
+    description: Cleaned product catalog extracted from Airbyte raw JSON
+    columns:
+      - name: product_id
+        description: Unique product identifier from source
+        tests: [unique, not_null]
+      - name: make
+        description: Product manufacturer/brand
+        tests: [not_null]
+      - name: model
+        description: Product model name
+        tests: [not_null]
+      - name: price
+        description: Product unit price (USD)
+        tests: [not_null]
+
+  - name: stg_purchases
+    description: Cleaned purchase transactions extracted from Airbyte raw JSON
+    columns:
+      - name: purchase_id
+        description: Unique transaction identifier
+        tests: [unique, not_null]
+      - name: user_id
+        description: FK to stg_users
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_users')
+              field: user_id
+      - name: product_id
+        description: FK to stg_products
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_products')
+              field: product_id
+      - name: purchased_at
+        description: May be null for purchases missing timestamp in source data

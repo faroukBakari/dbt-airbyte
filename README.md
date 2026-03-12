@@ -9,6 +9,13 @@ A minimalistic **Modern Data Stack** proof-of-concept demonstrating end-to-end E
 
 > 🎯 **Goal**: Ingest fake e-commerce data (users, products, purchases), transform it through staging → marts → gold layers, and produce analytics-ready tables.
 
+### What This Demonstrates
+
+- **Complete Modern Data Stack** using only open-source tools — no vendor lock-in, no license fees
+- **Automated ELT pipeline**: raw JSON → typed views → business dimensions → analytics tables
+- **Two setup modes**: live Airbyte ingestion or instant seed data for fast evaluation
+- **Pipeline orchestration** with Airflow, including branching logic and data quality gates (44 dbt tests)
+
 ---
 
 ## 📑 Table of Contents
@@ -16,12 +23,14 @@ A minimalistic **Modern Data Stack** proof-of-concept demonstrating end-to-end E
 - [Quick Start](#-quick-start)
 - [Prerequisites](#-prerequisites)
 - [Architecture](#-architecture)
+- [Key Design Decisions](#-key-design-decisions)
 - [ELT Pipeline Explained](#-elt-pipeline-explained)
 - [Setup Guide](#-setup-guide)
 - [Running the Pipeline](#-running-the-pipeline)
 - [Query Examples](#-query-examples)
 - [Visualizing Results](#-visualizing-results)
 - [Troubleshooting](#-troubleshooting)
+- [Extending to Production](#-extending-to-production)
 - [Resources](#-resources)
 
 ---
@@ -50,6 +59,9 @@ docker exec -it postgres psql -U postgres -d airbyte_raw \
 # Lightweight setup WITHOUT Airbyte (uses seed data, faster)
 ./scripts/setup.sh --seed
 
+# Infrastructure only — no Airbyte, no seed data (bring your own data)
+./scripts/setup.sh --no-airbyte
+
 # Cleanup everything
 ./scripts/setup.sh --clean
 ```
@@ -61,7 +73,7 @@ docker exec -it postgres psql -U postgres -d airbyte_raw \
 | Requirement | Version | Notes |
 |-------------|---------|-------|
 | Docker | 20.10+ | With Docker Compose v2 |
-| PostgreSQL Container | Any | External container on port 5432 |
+| PostgreSQL Container | Any | External container on port 5432 (auto-created by `setup.sh` if absent) |
 | Docker Socket | — | Airflow uses `docker exec` to run dbt and seed commands. The Docker socket must be accessible (mounted automatically by docker-compose). |
 
 ### Verify Prerequisites
@@ -119,6 +131,40 @@ docker ps | grep postgres
 |----------|------|---------|
 | `airbyte_raw` | `airbyte_user` | Raw data from Airbyte + dbt transforms (staging, marts, gold) |
 
+### Configuration
+
+The project uses a two-file environment chain:
+
+| File | Purpose | Managed by |
+|------|---------|------------|
+| `.env` | User config — `POSTGRES_CONTAINER`, `POSTGRES_USER`, `DOCKER_NETWORK` | You (copied from `.env.example` on first run) |
+| `.env.generated` | Auto-generated credentials and derived variables | `setup.sh` (regenerated on each run, do not edit) |
+
+Both files are loaded by `docker-compose.yaml` via `env_file:`. Containers see the merged result.
+
+**Default credentials** (POC constants defined in `setup.sh`, not secrets):
+
+| Service | User | Password |
+|---------|------|----------|
+| dbt | `dbt_user` | `dbt_password` |
+| Airbyte DB | `airbyte_user` | `airbyte_password` |
+| Airbyte Web | `airbyte` | `password` |
+| Airflow | `admin` | `admin` |
+
+To customize, edit the `GEN_*` variables at the top of `scripts/setup.sh` before running setup.
+
+---
+
+## 🔑 Key Design Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| Views for staging, tables for marts/gold | Staging is pass-through (cheap to rebuild); marts/gold are aggregated (expensive to recompute) |
+| Single database, multiple schemas | Simpler Docker setup; schemas provide logical separation without cross-DB permission complexity |
+| full_refresh + overwrite | Stateless and idempotent — correct for a POC. Incremental adds complexity without adding demo value |
+| Faker seed=42 | Deterministic data — same results every run, reproducible demos |
+| Airflow `docker exec` pattern | Avoids embedding dbt inside Airflow image; keeps containers single-purpose |
+
 ---
 
 ## 🔄 ELT Pipeline Explained
@@ -148,6 +194,10 @@ docker ps | grep postgres
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
+
+### Sync Mode
+
+Airbyte connections use **full_refresh + overwrite** — each sync replaces all destination data. This is intentional for a POC (simple, stateless, idempotent). Production pipelines would use incremental sync with deduplication.
 
 ### Layer Descriptions
 
@@ -204,7 +254,7 @@ FROM gold.gold_user_purchases;
 This automatically:
 - ✅ Creates database (`airbyte_raw`) and users
 - ✅ Creates dbt schemas (staging, marts, gold)
-- ✅ Starts Airbyte (7 containers)
+- ✅ Starts Airbyte
 - ✅ Starts Airflow + dbt-runner
 - ✅ Configures Airbyte source, destination, and connection
 - ✅ Sets Airflow variable `airbyte_connection_id`
@@ -278,9 +328,11 @@ docker exec dbt-runner dbt test
 | `trigger_airbyte_sync` | Calls Airbyte API, waits for sync completion | 30-60s |
 | `seed_raw_data` | Loads test SQL (only if Airbyte not configured) | <1s |
 | `dbt_run_staging` | Creates `staging.*` views | ~2s |
-| `dbt_run_marts` | Creates `marts.dim_users` table | ~2s |
+| `dbt_run_marts` | Creates `marts.dim_users`, `marts.dim_products` tables | ~2s |
 | `dbt_run_gold` | Creates `gold.gold_user_purchases` table | ~2s |
-| `dbt_test` | Validates data quality (not null, unique, etc.) | ~2s |
+| `dbt_test` | Validates data quality (not null, unique, relationships) | ~2s |
+| `data_loaded` | Join point — waits for whichever data source completed | <1s |
+| `pipeline_complete` | Logs completion summary | <1s |
 
 ---
 
@@ -462,7 +514,7 @@ dbt-airbyte/
 │   │   └── generate_schema_name.sql  # Custom schema naming (bare names)
 │   └── models/
 │       ├── sources.yml          # Source definitions (Airbyte raw tables)
-│       ├── staging/             # stg_users, stg_products, stg_purchases
+│       ├── staging/             # stg_users, stg_products, stg_purchases (+ schema.yml tests)
 │       ├── marts/               # dim_users, dim_products (+ schema.yml tests)
 │       └── gold/                # gold_user_purchases (+ schema.yml tests)
 ├── profiles/
@@ -474,6 +526,18 @@ dbt-airbyte/
 │   └── seed_test_data.sql       # Sample data for --seed mode
 └── README.md
 ```
+
+---
+
+## 🚢 Extending to Production
+
+This POC is intentionally simple. Here's what a production deployment would add:
+
+- **Incremental syncs** — switch from full_refresh to incremental + dedup for large datasets
+- **Secrets management** — replace hardcoded POC credentials with a vault (e.g., HashiCorp Vault, AWS Secrets Manager)
+- **CI/CD** — add dbt slim CI (`dbt test --select state:modified+`) and Airflow DAG validation
+- **Monitoring** — add Airflow alerting, dbt source freshness checks, data observability tooling
+- **Scaling** — swap PostgreSQL for a cloud warehouse (Snowflake, BigQuery, Redshift); Airbyte Cloud for managed connectors
 
 ---
 
