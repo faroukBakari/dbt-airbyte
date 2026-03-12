@@ -43,6 +43,9 @@ AIRFLOW_URL="http://localhost:8080"
 AIRFLOW_HEALTH_URL="http://localhost:8080/health"
 AIRBYTE_URL="http://localhost:8000"
 AIRBYTE_API_URL="http://localhost:8000/api/v1/health"
+METABASE_URL="http://localhost:54892"
+DBT_DOCS_PORT="52419"
+DBT_DOCS_URL="http://localhost:${DBT_DOCS_PORT}"
 
 # Colors for output
 RED='\033[0;31m'
@@ -366,6 +369,17 @@ create_databases() {
         abort "User '${GEN_DBT_USER}' was not created"
     fi
 
+    # Create metabase app database (for Metabase internal state)
+    if ! check_database_exists "metabase"; then
+        print_info "Creating database: metabase (Metabase app state)..."
+        if ! docker exec "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -d postgres -c \
+            "CREATE DATABASE metabase OWNER ${POSTGRES_USER};" 2>&1; then
+            abort "Failed to create metabase database"
+        fi
+    else
+        print_info "  Database metabase already exists"
+    fi
+
     print_success "Databases and users created successfully"
 }
 
@@ -607,6 +621,50 @@ wait_for_dbt() {
          docker logs dbt-runner"
 }
 
+start_dbt_docs() {
+    print_step "Starting dbt docs server (port ${DBT_DOCS_PORT})..."
+
+    # The dbt container is minimal (no pkill/killall). If a stale docs server
+    # is running, the new one will fail to bind. A container restart is the
+    # reliable cleanup path, but setup.sh calls this after a fresh start so
+    # there should be no stale process. Guard with a port check.
+    if check_url_responding "$DBT_DOCS_URL" 2; then
+        print_info "dbt docs already running at $DBT_DOCS_URL — skipping"
+        return 0
+    fi
+
+    # Generate docs catalog
+    print_info "Generating dbt documentation..."
+    if ! docker exec dbt-runner dbt docs generate 2>&1 | tail -1; then
+        print_warning "dbt docs generate failed — skipping docs server"
+        return 0
+    fi
+
+    # Serve in background
+    print_info "Serving dbt docs on port ${DBT_DOCS_PORT}..."
+    docker exec -d dbt-runner dbt docs serve --port "${DBT_DOCS_PORT}" --host 0.0.0.0
+
+    # Brief wait then check
+    sleep 2
+    if check_url_responding "$DBT_DOCS_URL" 3; then
+        print_success "dbt docs available at $DBT_DOCS_URL"
+    else
+        print_warning "dbt docs server started but not responding yet — may need a few seconds"
+    fi
+}
+
+run_dbt_build() {
+    print_step "Running dbt build (models + tests)..."
+
+    print_info "This ensures models exist before docs are generated..."
+    if ! docker exec dbt-runner dbt build 2>&1 | tail -5; then
+        print_warning "dbt build had issues — docs may be incomplete"
+        return 1
+    fi
+
+    print_success "dbt build completed"
+}
+
 seed_test_data() {
     print_step "Seeding test data into airbyte_raw..."
 
@@ -682,6 +740,22 @@ check_all_services() {
         all_ok=false
     fi
 
+    # Check Metabase
+    print_info "Checking Metabase..."
+    if check_url_responding "$METABASE_URL" 5; then
+        METABASE_STATUS="${GREEN}● ONLINE${NC}"
+    else
+        METABASE_STATUS="${YELLOW}○ STARTING${NC}"
+    fi
+
+    # Check dbt docs
+    print_info "Checking dbt docs..."
+    if check_url_responding "$DBT_DOCS_URL" 3; then
+        DBT_DOCS_STATUS="${GREEN}● ONLINE${NC}"
+    else
+        DBT_DOCS_STATUS="${YELLOW}○ STARTING${NC}"
+    fi
+
     echo ""
 
     if $all_ok; then
@@ -707,6 +781,8 @@ print_service_urls() {
     printf "│  %-11s %-28b %-26s %-11s│\n" "Airflow" "$AIRFLOW_STATUS" "$AIRFLOW_URL" "${GEN_AIRFLOW_ADMIN_USER}/${GEN_AIRFLOW_ADMIN_PASSWORD}"
     printf "│  %-11s %-28b %-26s %-11s│\n" "PostgreSQL" "$POSTGRES_STATUS" "localhost:${POSTGRES_PORT}" "$POSTGRES_USER"
     printf "│  %-11s %-28b %-26s %-11s│\n" "dbt" "$DBT_STATUS" "(CLI only)" "-"
+    printf "│  %-11s %-28b %-26s %-11s│\n" "Metabase" "$METABASE_STATUS" "$METABASE_URL" "(setup wizard)"
+    printf "│  %-11s %-28b %-26s %-11s│\n" "dbt Docs" "$DBT_DOCS_STATUS" "$DBT_DOCS_URL" "-"
     echo "└─────────────────────────────────────────────────────────────────────┘"
     echo ""
     echo "📌 Quick Links:"
@@ -715,6 +791,8 @@ print_service_urls() {
     fi
     echo "   • Airflow UI:     $AIRFLOW_URL"
     echo "   • Airflow DAGs:   $AIRFLOW_URL/dags/elt_pipeline/grid"
+    echo "   • Metabase:       $METABASE_URL"
+    echo "   • dbt Docs:       $DBT_DOCS_URL"
     echo ""
 }
 
@@ -740,6 +818,7 @@ cleanup() {
 
     print_step "Dropping databases..."
     docker exec "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -c "DROP DATABASE IF EXISTS ${GEN_AIRBYTE_DB_NAME};" 2>/dev/null || true
+    docker exec "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -c "DROP DATABASE IF EXISTS metabase;" 2>/dev/null || true
     print_success "Databases dropped"
 
     print_step "Dropping users..."
@@ -780,7 +859,7 @@ main() {
     echo "  1. Verify prerequisites (Docker, PostgreSQL container)"
     echo "  2. Create database (airbyte_raw) and users"
     echo "  3. Create dbt schemas (staging, marts, gold)"
-    echo "  4. Start containers (dbt-runner, Airflow)"
+    echo "  4. Start containers (dbt-runner, Airflow, Metabase, dbt docs)"
     if [[ "$with_airbyte" == "true" ]]; then
         echo "  5. Start Airbyte (Sample Data connector)"
     elif [[ "$with_seed" == "true" ]]; then
@@ -812,9 +891,15 @@ main() {
         start_airbyte
         wait_for_airbyte
         configure_airbyte
+        # In Airbyte mode, skip dbt build + docs — the Airflow DAG handles the
+        # first build. Docs will be available after the first pipeline run or
+        # on the next setup.sh invocation with --seed.
     # Or seed test data if requested
     elif [[ "$with_seed" == "true" ]]; then
         seed_test_data
+        # Data is loaded — now build models so docs have a populated catalog
+        run_dbt_build
+        start_dbt_docs
     fi
 
     # Verify all services and show status
@@ -843,6 +928,12 @@ main() {
         echo "   2. Find 'elt_pipeline' DAG"
         echo "   3. Toggle ON and click 'Trigger DAG'"
     fi
+    echo ""
+    echo "📊 Metabase (BI Dashboard):"
+    echo "   • Open $METABASE_URL (first launch: complete the setup wizard)"
+    echo "   • Add database: PostgreSQL → host: postgres, port: 5432"
+    echo "     db: airbyte_raw, user: dbt_user, password: dbt_password"
+    echo "   • Browse the gold schema to build dashboards"
     echo ""
     echo "🖥️  CLI Quick Start:"
     echo "   ./scripts/run_pipeline.sh    # Trigger & monitor pipeline in terminal"

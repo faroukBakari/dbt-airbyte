@@ -3,9 +3,14 @@ version: 2
 models:
   - name: dim_users
     description: User dimension with purchase activity summary
+    config:
+      contract:
+        enforced: true
+    latest_version: 1
     columns:
       - name: user_id
         description: Primary key — unique user identifier
+        data_type: bigint
         tests:
           - unique
           - not_null
@@ -14,27 +19,66 @@ models:
               field: user_id
       - name: full_name
         description: "User's display name"
+        data_type: text
         tests:
           - not_null
       - name: email
         description: "User's email address"
+        data_type: text
         tests:
           - unique
           - not_null
+      - name: occupation
+        description: "User's occupation"
+        data_type: text
+      - name: city
+        description: "User's city of residence"
+        data_type: text
+      - name: state
+        description: "User's state/region of residence"
+        data_type: text
+      - name: country_code
+        description: Two-letter country code
+        data_type: text
+      - name: age
+        description: "User's age in years"
+        data_type: integer
+      - name: created_at
+        description: Account creation timestamp from source
+        data_type: timestamptz
       - name: total_purchases
         description: Count of all purchase transactions
+        data_type: bigint
         tests:
           - not_null
       - name: total_spent
         description: Sum of all purchase amounts (USD)
+        data_type: numeric(12,2)
         tests:
           - not_null
+      - name: total_returns
+        description: Count of returned purchases
+        data_type: bigint
+      - name: first_purchase_at
+        description: Timestamp of earliest purchase
+        data_type: timestamptz
+      - name: last_purchase_at
+        description: Timestamp of most recent purchase
+        data_type: timestamptz
+    versions:
+      - v: 1
+        defined_in: dim_users
 
   - name: dim_products
     description: Product dimension with sales metrics
+    config:
+      contract:
+        enforced: true
+    latest_version: 1
     columns:
       - name: product_id
         description: Primary key — unique product identifier
+        data_type: bigint
         tests:
           - unique
           - not_null
@@ -43,13 +87,34 @@ models:
               field: product_id
       - name: make
         description: Product manufacturer/brand
+        data_type: text
         tests:
           - not_null
       - name: model
         description: Product model name
+        data_type: text
         tests:
           - not_null
+      - name: year
+        description: Product model year
+        data_type: integer
       - name: price
         description: Product unit price (USD)
+        data_type: numeric(12,2)
         tests:
           - not_null
+      - name: created_at
+        description: Product creation timestamp from source
+        data_type: timestamptz
+      - name: loaded_at
+        description: Timestamp when record was loaded from source
+        data_type: timestamptz
+      - name: times_sold
+        description: Total number of times this product was sold
+        data_type: bigint
+      - name: times_returned
+        description: Total number of times this product was returned
+        data_type: bigint
+    versions:
+      - v: 1
+        defined_in: dim_products

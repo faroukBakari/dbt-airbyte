@@ -1,0 +1,37 @@
+version: 2
+
+exposures:
+  - name: executive_kpi_dashboard
+    type: dashboard
+    description: >
+      Weekly executive dashboard showing customer lifetime value,
+      retention metrics, and revenue breakdowns.
+    owner:
+      name: Analytics Team
+      email: analytics@company.com
+    depends_on:
+      - ref('gold_user_purchases', v=1)
+
+  - name: product_performance_report
+    type: analysis
+    description: >
+      Monthly product sales and return rate analysis.
+      Used by the product team for inventory and catalog decisions.
+    owner:
+      name: Product Team
+      email: product@company.com
+    depends_on:
+      - ref('dim_products', v=1)
+      - ref('gold_user_purchases', v=1)
+
+  - name: customer_segmentation_model
+    type: ml
+    description: >
+      ML pipeline for customer segmentation based on purchase behavior,
+      demographics, and return patterns.
+    owner:
+      name: Data Science Team
+      email: datascience@company.com
+    depends_on:
+      - ref('gold_user_purchases', v=1)
+      - ref('dim_users', v=1)

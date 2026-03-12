@@ -12,7 +12,11 @@ This roadmap builds on the current state: Airbyte + dbt 1.9 + Airflow + PostgreS
 |-----------|--------|
 | ELT pipeline | End-to-end: Airbyte/seed → staging → marts → gold |
 | dbt version | 1.9.0 (Critical Support) |
-| Test coverage | 44 tests — `not_null`, `unique`, `relationships` |
+| Test coverage | 54 tests — 44 data tests + 4 unit tests + 6 contract checks |
+| Execution model | `dbt build` (interleaved models + tests in DAG order) |
+| Contracts | Enforced on marts (`dim_users`, `dim_products`) and gold (`gold_user_purchases`) |
+| Versioning | All mart/gold models at v1, `defined_in` preserving SQL file names |
+| Exposures | 3 declared downstream consumers (dashboard, analysis, ML pipeline) |
 | Orchestration | Airflow DAG with branch logic (Airbyte vs seed mode) |
 | Documentation | Column descriptions in all schema.yml files, dbt docs generate |
 | CI/CD | None |
@@ -521,46 +525,100 @@ models:
 
 ---
 
+## Phase 6: Visualization
+
+**Goal**: Make the gold layer visible — dashboards that tell a story from the transformed data.
+
+### 6.1 — Metabase (POC BI layer)
+
+**What**: Open-source BI tool added as a single Docker container. Connects directly to the gold schema in PostgreSQL. Provides interactive dashboards, charts, and ad-hoc SQL exploration.
+
+**Why Metabase**: Lowest setup effort (1 container), highest demo impact, largest community (~40k+ GitHub stars, AGPL license). Auto-discovers PostgreSQL tables. Non-technical users can explore data without writing SQL. Completes the full modern data stack: Airbyte (ingest) → dbt (transform) → Airflow (orchestrate) → Metabase (visualize).
+
+**Setup**: Already wired in `docker-compose.yaml`. Metabase uses the existing PostgreSQL instance for its own app state (database `metabase`). On first launch, complete the setup wizard at `http://localhost:54892` and add the data warehouse connection:
+
+- **Database type**: PostgreSQL
+- **Host**: `postgres` (Docker network hostname)
+- **Port**: `5432`
+- **Database**: `airbyte_raw`
+- **Username**: `dbt_user` / **Password**: `dbt_password`
+- **Schema filter**: Select `gold` (optionally `marts` for dimension tables)
+
+**Dashboard ideas** (from `gold_user_purchases`):
+- Top spenders by total_spent (bar chart)
+- Return rate distribution (histogram)
+- Revenue by country_code (pie/map)
+- Avg purchase value vs return rate (scatter)
+- Purchase activity timeline (line chart using first/last_purchase_at)
+
+**Effort**: Done (infrastructure). ~30 min for initial dashboard creation.
+
+### 6.2 — Lightdash (dbt-native BI) — BACKLOG
+
+**What**: Graduation path from Metabase when metrics governance becomes important. Lightdash reads dbt `schema.yml` directly — dimensions, metrics, and joins defined in dbt become Lightdash explores automatically, eliminating metric drift between the transformation and visualization layers.
+
+**Why not now**: Requires 3 Docker services (app + PostgreSQL + Redis), deeper dbt YAML setup (metrics definitions in schema files), and solves a problem (metric drift) that doesn't exist at POC scale with one gold model. Lightdash is the right tool when the team grows and multiple people define metrics.
+
+**When to migrate**: When any of these signals appear:
+- Multiple analysts defining metrics independently (drift risk)
+- Business logic duplicated between dbt and Metabase questions
+- Need for a governed semantic layer (single source of truth for "what is revenue?")
+
+**Effort**: ~3 hours (Docker setup + dbt YAML metric definitions + initial explores).
+
+---
+
 ## Implementation Order
 
 ```
 Phase 1 (Testing Depth)         ← Foundation — do first
 │
-├─ 1.1  dbt build switch           30 min    [low risk]
-├─ 1.2  Unit tests                  2 hr     [YAML only]
-├─ 1.3  Source freshness            1 hr     [YAML + 1 Airflow task]
-└─ 1.4  Model contracts            1 hr     [YAML only]
+├─ 1.1  dbt build switch           ✅ DONE   [Airflow DAG simplified]
+├─ 1.2  Unit tests                  ✅ DONE   [4 unit tests on gold model]
+├─ 1.3  Source freshness            ⏳ TODO   [deferred — requires Airbyte mode]
+└─ 1.4  Model contracts             ✅ DONE   [enforced on marts + gold, with precision]
                                     ─────
-                                    ~5 hr
+                                    ~1 hr remaining (1.3 only)
+
+Versioning (added)              ← Pairs with contracts
+│
+└─  Model versioning                ✅ DONE   [all mart/gold models at v1]
 
 Phase 2 (Observability)         ← Highest demo impact
 │
-└─ 2.1  Elementary                  3 hr     [package + CLI + Docker]
+└─ 2.1  Elementary                  ⏳ TODO   [package + CLI + Docker]
                                     ─────
                                     ~3 hr
 
 Phase 3 (SQL Quality Gates)     ← Team hygiene
 │
-├─ 3.1  SQLFluff                    1 hr     [config + initial fix]
-└─ 3.2  Pre-commit hooks           30 min    [config only]
+├─ 3.1  SQLFluff                    ⏳ TODO   [config + initial fix]
+└─ 3.2  Pre-commit hooks            ⏳ TODO   [config only]
                                     ─────
                                     ~1.5 hr
 
 Phase 4 (CI/CD)                 ← Team readiness
 │
-├─ 4.1  GitHub Actions slim CI      3 hr     [workflow + CI profile]
-└─ 4.2  dbt compile check          15 min    [1 CI step]
+├─ 4.1  GitHub Actions slim CI      ⏳ TODO   [workflow + CI profile]
+└─ 4.2  dbt compile check           ⏳ TODO   [1 CI step]
                                     ─────
                                     ~3.5 hr
 
 Phase 5 (Governance)            ← Multi-team maturity
 │
-├─ 5.1  Exposures                  30 min    [YAML only]
-└─ 5.2  Groups & access            1 hr     [config only]
+├─ 5.1  Exposures                   ✅ DONE   [3 exposures declared]
+└─ 5.2  Groups & access             ⏳ TODO   [config only]
                                     ─────
-                                    ~1.5 hr
+                                    ~1 hr remaining (5.2 only)
 
-Total estimated effort: ~14.5 hours
+Phase 6 (Visualization)         ← Data storytelling
+│
+├─ 6.1  Metabase (POC BI)          ✅ DONE   [docker-compose + gold schema]
+└─ 6.2  Lightdash (dbt-native BI)  📋 BACKLOG [graduation path when metrics governance matters]
+                                    ─────
+                                    6.2: ~3 hr (3 Docker services + dbt YAML metrics)
+
+Total remaining effort: ~10 hours (excl. backlog)
 ```
 
 ---
@@ -574,6 +632,8 @@ Phase 3 ──→ Phase 4 (CI includes SQLFluff lint from Phase 3)
 
 Phase 2 and Phase 5 are independent — can be done in any order.
 Phase 3 is independent — can be done anytime.
+Phase 6 is independent — Metabase queries gold tables directly.
+Phase 6.2 (Lightdash) depends on Phase 6.1 adoption learnings.
 ```
 
 ---
@@ -590,3 +650,4 @@ These are outside the scope of this roadmap but worth noting for future referenc
 | Airflow → Dagster/Prefect migration | Orchestrator swap | When Airflow operational overhead becomes significant |
 | `cosmos` (Airflow dbt provider) | Replaces `docker exec` pattern with native Airflow operators | When per-model Airflow visibility is required |
 | Data contracts across teams (Soda, Monte Carlo) | Enterprise-grade observability | When Elementary's scope is insufficient |
+| Lightdash (dbt-native BI) | Metabase sufficient at POC scale | When metric drift between dbt and BI becomes a problem (see Phase 6.2) |

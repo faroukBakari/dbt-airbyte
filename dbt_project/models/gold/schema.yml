@@ -3,9 +3,14 @@ version: 2
 models:
   - name: gold_user_purchases
     description: Analytics-ready user purchase summary for BI consumption
+    config:
+      contract:
+        enforced: true
+    latest_version: 1
     columns:
       - name: user_id
         description: Primary key — unique user identifier (only users with purchases)
+        data_type: bigint
         tests:
           - unique
           - not_null
@@ -14,26 +19,71 @@ models:
               field: user_id
       - name: full_name
         description: "User's display name"
+        data_type: text
         tests:
           - not_null
       - name: email
         description: "User's email address"
+        data_type: text
         tests:
           - unique
           - not_null
+      - name: occupation
+        description: "User's occupation"
+        data_type: text
+      - name: city
+        description: "User's city of residence"
+        data_type: text
+      - name: state
+        description: "User's state/region of residence"
+        data_type: text
+      - name: country_code
+        description: Two-letter country code
+        data_type: text
+      - name: age
+        description: "User's age in years"
+        data_type: integer
       - name: total_purchases
         description: Always > 0 (filtered in model)
+        data_type: bigint
         tests:
           - not_null
       - name: total_spent
         description: Lifetime spend (USD)
+        data_type: numeric(12,2)
         tests:
           - not_null
+      - name: total_returns
+        description: Count of returned purchases
+        data_type: bigint
       - name: avg_purchase_value
         description: Average spend per transaction (total_spent / total_purchases)
+        data_type: numeric(12,2)
         tests:
           - not_null
       - name: return_rate_pct
         description: Percentage of purchases returned (total_returns / total_purchases * 100)
+        data_type: numeric(5,1)
         tests:
           - not_null
+      - name: last_purchased_product
+        description: "Make + model of the user's most recent purchase"
+        data_type: text
+      - name: last_purchased_price
+        description: Price of the most recent purchased product (USD)
+        data_type: numeric(12,2)
+      - name: first_purchase_at
+        description: Timestamp of earliest purchase
+        data_type: timestamptz
+      - name: last_purchase_at
+        description: Timestamp of most recent purchase
+        data_type: timestamptz
+      - name: user_created_at
+        description: Account creation timestamp from source
+        data_type: timestamptz
+      - name: refreshed_at
+        description: Timestamp when this row was last rebuilt by dbt
+        data_type: timestamptz
+    versions:
+      - v: 1
+        defined_in: gold_user_purchases

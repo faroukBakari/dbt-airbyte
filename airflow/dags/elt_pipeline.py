@@ -3,10 +3,7 @@ ELT Pipeline DAG - Airbyte + dbt POC
 =====================================
 Orchestrates the full ELT workflow:
 1. Trigger Airbyte sync (or seed test data as fallback)
-2. Run dbt staging models
-3. Run dbt mart models
-4. Run dbt gold models
-5. Run dbt tests
+2. Run dbt build (models + tests in DAG-interleaved order)
 
 Modes:
 - With Airbyte: Triggers sync via API (requires AIRBYTE_CONNECTION_ID variable)
@@ -20,15 +17,13 @@ Task Graph::
                                ▼
                           data_loaded
                                │
-                    dbt_run_staging
+                           dbt_build
                                │
-                     dbt_run_marts
-                               │
-                      dbt_run_gold
-                               │
-                        dbt_test
-                               │
-                    pipeline_complete
+                       pipeline_complete
+
+dbt build runs seeds → staging → marts → gold in dependency order,
+with tests interleaved: a failing test at any layer blocks downstream
+models from being built.
 """
 
 import os
@@ -173,49 +168,17 @@ with DAG(
         trigger_rule='none_failed_min_one_success',
     )
 
-    # Task 2: Run dbt staging models (raw → staging views)
-    dbt_run_staging = BashOperator(
-        task_id='dbt_run_staging',
-        bash_command='docker exec dbt-runner dbt run --select staging',
+    # Task 2: dbt build (models + tests in DAG-interleaved order)
+    # Replaces separate run/test tasks — a test failure at any layer
+    # stops downstream models from being built.
+    dbt_build = BashOperator(
+        task_id='dbt_build',
+        bash_command='docker exec dbt-runner dbt build',
         doc_md="""
-        ### dbt Staging
-        Transforms raw JSON data into typed, cleaned views.
-        - stg_users
-        - stg_products
-        - stg_purchases
-        """,
-    )
-
-    # Task 3: Run dbt mart models (staging → mart tables)
-    dbt_run_marts = BashOperator(
-        task_id='dbt_run_marts',
-        bash_command='docker exec dbt-runner dbt run --select marts',
-        doc_md="""
-        ### dbt Marts
-        Builds business-focused dimension tables.
-        - dim_users (with purchase aggregates)
-        - dim_products (product catalog with sales metrics)
-        """,
-    )
-
-    # Task 4: Run dbt gold models (marts → gold tables)
-    dbt_run_gold = BashOperator(
-        task_id='dbt_run_gold',
-        bash_command='docker exec dbt-runner dbt run --select gold',
-        doc_md="""
-        ### dbt Gold Layer
-        Creates final analytics-ready tables for BI consumption.
-        - gold_user_purchases
-        """,
-    )
-
-    # Task 5: Run dbt tests (data quality validation)
-    dbt_test = BashOperator(
-        task_id='dbt_test',
-        bash_command='docker exec dbt-runner dbt test',
-        doc_md="""
-        ### dbt Tests
-        Validates data quality across all models.
+        ### dbt Build
+        Runs models and tests in dependency order (interleaved).
+        staging views → staging tests → mart tables → mart tests → gold tables → gold tests.
+        A test failure at any layer blocks downstream execution.
         """,
     )
 
@@ -238,5 +201,5 @@ with DAG(
     trigger_airbyte_sync >> data_loaded
     seed_raw_data >> data_loaded
 
-    # Sequential dbt flow
-    data_loaded >> dbt_run_staging >> dbt_run_marts >> dbt_run_gold >> dbt_test >> pipeline_complete
+    # dbt build handles the full staging → marts → gold flow with interleaved tests
+    data_loaded >> dbt_build >> pipeline_complete

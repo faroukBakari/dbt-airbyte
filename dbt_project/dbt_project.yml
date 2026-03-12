@@ -4,25 +4,25 @@ config-version: 2
 
 profile: 'dbt_airbyte_poc'
 
-model-paths: ["models"]
+model-paths: ["models"]       # sources → staging → marts → gold layer hierarchy
 analysis-paths: ["analyses"]
 test-paths: ["tests"]
-seed-paths: ["seeds"]
+seed-paths: ["seeds"]          # Deterministic test data (used in seed mode, see README)
 macro-paths: ["macros"]
 snapshot-paths: ["snapshots"]
 
-clean-targets:
+clean-targets:                 # Removed by `dbt clean` — safe to regenerate
   - "target"
   - "dbt_packages"
 
 models:
   dbt_airbyte_poc:
     staging:
-      +materialized: view
+      +materialized: view      # Views: lightweight, always reflect latest raw data
       +schema: staging
     marts:
-      +materialized: table
+      +materialized: table     # Tables: pre-computed for join performance
       +schema: marts
     gold:
-      +materialized: table
+      +materialized: table     # Tables: analytics-ready, consumed by Metabase
       +schema: gold

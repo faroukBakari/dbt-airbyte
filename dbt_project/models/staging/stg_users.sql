@@ -1,4 +1,7 @@
 -- Staging model: Clean and normalize raw user data from Airbyte Sample Data
+-- Airbyte stores all source fields as JSON inside _airbyte_data.
+-- We extract each field with ->> (text) then cast to the target type.
+-- Nested objects (e.g. address) use chained -> / ->> accessors.
 with raw_users as (
     select
         _airbyte_data::jsonb as data,

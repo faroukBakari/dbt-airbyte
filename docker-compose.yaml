@@ -11,6 +11,8 @@ services:
     volumes:
       - ./dbt_project:/usr/app/dbt
       - ./profiles:/root/.dbt
+    ports:
+      - "52419:52419"  # dbt docs serve
     networks:
       - poc-network
     entrypoint: ["tail", "-f", "/dev/null"]  # Keep alive for interactive use
@@ -41,6 +43,29 @@ services:
     networks:
       - poc-network
     user: "${AIRFLOW_UID:-50000}:${DOCKER_GID:-1001}"
+
+  metabase:
+    image: metabase/metabase:latest
+    container_name: metabase
+    environment:
+      # Use PostgreSQL for Metabase app state (not the default H2)
+      MB_DB_TYPE: postgres
+      MB_DB_DBNAME: metabase
+      MB_DB_PORT: 5432
+      MB_DB_USER: ${POSTGRES_USER:-postgres}
+      MB_DB_PASS: ${POSTGRES_PASSWORD:-password}
+      MB_DB_HOST: ${POSTGRES_CONTAINER:-postgres}
+    ports:
+      - "54892:3000"
+    networks:
+      - poc-network
+    restart: on-failure
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s         # Metabase is slow to boot (JVM + migrations); avoid false-negative healthchecks
 
 networks:
   poc-network:

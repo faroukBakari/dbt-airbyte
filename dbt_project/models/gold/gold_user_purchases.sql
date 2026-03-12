@@ -14,7 +14,9 @@ purchases as (
     select * from {{ ref('stg_purchases') }}
 ),
 
--- Get last purchased product per user
+-- Get last purchased product per user using Postgres-specific DISTINCT ON.
+-- This picks the first row per user_id after ORDER BY … DESC, giving us the
+-- most recent purchase. Not portable to other SQL engines — see README Known Limitations.
 user_last_purchase as (
     select distinct on (p.user_id)
         p.user_id,
