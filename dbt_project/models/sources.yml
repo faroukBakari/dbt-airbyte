@@ -4,25 +4,29 @@ sources:
   - name: airbyte_raw
     schema: public
     description: "Raw data from Airbyte Sample Data (Faker) connector"
+    loaded_at_field: _airbyte_emitted_at
+    freshness:
+      warn_after: {count: 12, period: hour}
+      error_after: {count: 24, period: hour}
     tables:
       - name: _airbyte_raw_users
         description: "Fake user profiles (name, email, address, etc.)"
         columns:
           - name: _airbyte_data
             description: "JSON blob containing user data"
-            tests:
+            data_tests:
               - not_null
       - name: _airbyte_raw_products
         description: "Fake product catalog (cars: make, model, year, price)"
         columns:
           - name: _airbyte_data
             description: "JSON blob containing product data"
-            tests:
+            data_tests:
               - not_null
       - name: _airbyte_raw_purchases
         description: "Fake purchase transactions linking users to products"
         columns:
           - name: _airbyte_data
             description: "JSON blob containing purchase data"
-            tests:
+            data_tests:
               - not_null

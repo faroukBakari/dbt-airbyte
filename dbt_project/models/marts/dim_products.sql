@@ -1,10 +1,21 @@
 -- Mart: Product dimension with sales metrics
 WITH products AS (
-    SELECT * FROM {{ ref('stg_products') }}
+    SELECT
+        product_id,
+        make,
+        model,
+        year,
+        price,
+        created_at,
+        loaded_at
+    FROM {{ ref('stg_products') }}
 ),
 
 purchases AS (
-    SELECT * FROM {{ ref('stg_purchases') }}
+    SELECT
+        product_id,
+        returned_at
+    FROM {{ ref('stg_purchases') }}
 ),
 
 product_sales AS (

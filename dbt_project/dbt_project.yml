@@ -23,6 +23,10 @@ models:
     marts:
       +materialized: table     # Tables: pre-computed for join performance
       +schema: marts
+      +contract: {enforced: true}
     gold:
       +materialized: table     # Tables: analytics-ready, consumed by Metabase
       +schema: gold
+      +contract: {enforced: true}
+  elementary:
+    +schema: elementary          # Elementary observability tables — persistent test/run metadata

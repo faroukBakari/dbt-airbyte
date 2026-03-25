@@ -11,7 +11,7 @@ models:
       - name: user_id
         description: Primary key — unique user identifier (only users with purchases)
         data_type: bigint
-        tests:
+        data_tests:
           - unique
           - not_null
           - relationships:
@@ -20,12 +20,12 @@ models:
       - name: full_name
         description: "User's display name"
         data_type: text
-        tests:
+        data_tests:
           - not_null
       - name: email
         description: "User's email address"
         data_type: text
-        tests:
+        data_tests:
           - unique
           - not_null
       - name: occupation
@@ -46,12 +46,12 @@ models:
       - name: total_purchases
         description: Always > 0 (filtered in model)
         data_type: bigint
-        tests:
+        data_tests:
           - not_null
       - name: total_spent
         description: Lifetime spend (USD)
         data_type: numeric(12,2)
-        tests:
+        data_tests:
           - not_null
       - name: total_returns
         description: Count of returned purchases
@@ -59,12 +59,12 @@ models:
       - name: avg_purchase_value
         description: Average spend per transaction (total_spent / total_purchases)
         data_type: numeric(12,2)
-        tests:
+        data_tests:
           - not_null
       - name: return_rate_pct
         description: Percentage of purchases returned (total_returns / total_purchases * 100)
         data_type: numeric(5,1)
-        tests:
+        data_tests:
           - not_null
       - name: last_purchased_product
         description: "Make + model of the user's most recent purchase"
@@ -87,3 +87,13 @@ models:
     versions:
       - v: 1
         defined_in: gold_user_purchases
+
+exposures:
+  - name: metabase_user_purchases
+    description: Metabase dashboard showing user purchase analytics
+    type: dashboard
+    depends_on:
+      - ref('gold_user_purchases')
+    owner:
+      name: Analytics
+      email: analytics@example.com

@@ -1,14 +1,33 @@
 -- Mart: User dimension with purchase activity summary
 WITH users AS (
-    SELECT * FROM {{ ref('stg_users') }}
+    SELECT
+        user_id,
+        full_name,
+        email,
+        occupation,
+        city,
+        state,
+        country_code,
+        age,
+        created_at
+    FROM {{ ref('stg_users') }}
 ),
 
 purchases AS (
-    SELECT * FROM {{ ref('stg_purchases') }}
+    SELECT
+        purchase_id,
+        user_id,
+        product_id,
+        purchased_at,
+        returned_at
+    FROM {{ ref('stg_purchases') }}
 ),
 
 products AS (
-    SELECT * FROM {{ ref('stg_products') }}
+    SELECT
+        product_id,
+        price
+    FROM {{ ref('stg_products') }}
 ),
 
 user_purchases AS (

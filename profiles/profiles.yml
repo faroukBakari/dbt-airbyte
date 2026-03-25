@@ -19,3 +19,16 @@ dbt_airbyte_poc:
       dbname: ci_test
       schema: public
       threads: 2
+
+elementary:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: "{{ env_var('POSTGRES_HOST_DOCKER', 'postgres') }}"
+      port: 5432
+      user: "{{ env_var('DBT_USER', 'dbt_user') }}"
+      password: "{{ env_var('DBT_PASSWORD', 'dbt_password') }}"
+      dbname: airbyte_raw
+      schema: elementary
+      threads: 2

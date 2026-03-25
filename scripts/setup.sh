@@ -384,12 +384,13 @@ create_databases() {
 }
 
 create_schemas() {
-    print_step "Creating dbt schemas (staging, marts, gold)..."
+    print_step "Creating dbt schemas (staging, marts, gold, elementary)..."
 
     # Check if schemas already exist
     if check_schema_exists "${GEN_AIRBYTE_DB_NAME}" "staging" && \
        check_schema_exists "${GEN_AIRBYTE_DB_NAME}" "marts" && \
-       check_schema_exists "${GEN_AIRBYTE_DB_NAME}" "gold"; then
+       check_schema_exists "${GEN_AIRBYTE_DB_NAME}" "gold" && \
+       check_schema_exists "${GEN_AIRBYTE_DB_NAME}" "elementary"; then
         print_info "Schemas already exist, skipping creation"
         print_success "Schemas verified"
         return 0
@@ -401,19 +402,22 @@ create_schemas() {
         CREATE SCHEMA IF NOT EXISTS staging;
         CREATE SCHEMA IF NOT EXISTS marts;
         CREATE SCHEMA IF NOT EXISTS gold;
+        CREATE SCHEMA IF NOT EXISTS elementary;
 
         GRANT ALL PRIVILEGES ON SCHEMA staging TO ${GEN_DBT_USER};
         GRANT ALL PRIVILEGES ON SCHEMA marts TO ${GEN_DBT_USER};
         GRANT ALL PRIVILEGES ON SCHEMA gold TO ${GEN_DBT_USER};
         GRANT ALL PRIVILEGES ON SCHEMA public TO ${GEN_DBT_USER};
+        GRANT ALL PRIVILEGES ON SCHEMA elementary TO ${GEN_DBT_USER};
 
         ALTER DEFAULT PRIVILEGES IN SCHEMA staging GRANT ALL ON TABLES TO ${GEN_DBT_USER};
         ALTER DEFAULT PRIVILEGES IN SCHEMA marts GRANT ALL ON TABLES TO ${GEN_DBT_USER};
         ALTER DEFAULT PRIVILEGES IN SCHEMA gold GRANT ALL ON TABLES TO ${GEN_DBT_USER};
+        ALTER DEFAULT PRIVILEGES IN SCHEMA elementary GRANT ALL ON TABLES TO ${GEN_DBT_USER};
     " 2>&1 || abort "Failed to create schemas in ${GEN_AIRBYTE_DB_NAME}"
 
     # Validate schemas
-    for schema in staging marts gold; do
+    for schema in staging marts gold elementary; do
         if ! check_schema_exists "${GEN_AIRBYTE_DB_NAME}" "$schema"; then
             abort "Schema '$schema' was not created in ${GEN_AIRBYTE_DB_NAME}"
         fi
@@ -655,6 +659,9 @@ start_dbt_docs() {
 
 run_dbt_build() {
     print_step "Running dbt build (models + tests)..."
+
+    print_info "Installing dbt packages (Elementary)..."
+    docker exec dbt-runner dbt deps 2>&1 | tail -3
 
     print_info "This ensures models exist before docs are generated..."
     if ! docker exec dbt-runner dbt build 2>&1 | tail -5; then
@@ -899,6 +906,8 @@ main() {
         seed_test_data
         # Data is loaded — now build models so docs have a populated catalog
         run_dbt_build
+        # Create observability views for Metabase dashboard (non-blocking)
+        bash "$SCRIPT_DIR/create_observability_views.sh" || print_warning "Observability views creation failed — not blocking"
         start_dbt_docs
     fi
 

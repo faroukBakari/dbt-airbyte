@@ -21,6 +21,7 @@ This roadmap builds on the current state: Airbyte + dbt 1.9 + Airflow + PostgreS
 | Documentation | Column descriptions in all schema.yml files, dbt docs generate |
 | SQL linting | SQLFluff (UPPER keywords, explicit aliases, spaced JSON ops) + pre-commit hooks |
 | CI/CD | GitHub Actions — 2 parallel jobs: SQLFluff lint + dbt parse (compile check) |
+| Observability | Elementary — persistent test results, model run metadata, HTML dashboard |
 
 ---
 
@@ -587,9 +588,10 @@ Versioning (added)              ← Pairs with contracts
 
 Phase 2 (Observability)         ← Highest demo impact
 │
-└─ 2.1  Elementary                  ⏳ TODO   [package + CLI + Docker]
+├─ 2.1  Elementary                  ✅ DONE   [package + profile + schema + report script]
+└─ 2.2  Metabase observability      ✅ DONE   [6 SQL views + dashboard guide + setup.sh wired]
                                     ─────
-                                    ~3 hr
+                                    Completed
 
 Phase 3 (SQL Quality Gates)     ← Team hygiene
 │
@@ -619,7 +621,7 @@ Phase 6 (Visualization)         ← Data storytelling
                                     ─────
                                     6.2: ~3 hr (3 Docker services + dbt YAML metrics)
 
-Total remaining effort: ~5 hours (excl. backlog)
+Total remaining effort: ~2 hours (excl. backlog)
 ```
 
 ---

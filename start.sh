@@ -12,6 +12,7 @@
 #   - PostgreSQL (external container)
 #   - dbt-runner, Airflow, Metabase (docker-compose.yaml)
 #   - Airbyte 8-container stack (docker-compose.airbyte.yaml)
+#   - dbt packages (Elementary observability + dependencies)
 #
 # Airbyte is auto-configured with Faker source → PostgreSQL destination.
 
@@ -39,7 +40,7 @@ done
 # -----------------------------------------------------------------------------
 # 1. PostgreSQL (external container)
 # -----------------------------------------------------------------------------
-echo -e "\n${BLUE}[1/5]${NC} Starting PostgreSQL..."
+echo -e "\n${BLUE}[1/7]${NC} Starting PostgreSQL..."
 if docker ps --format '{{.Names}}' | grep -q '^postgres$'; then
     echo -e "${GREEN}  Already running${NC}"
 else
@@ -67,12 +68,22 @@ done
 # -----------------------------------------------------------------------------
 # 2. Core services (dbt, Airflow, Metabase)
 # -----------------------------------------------------------------------------
-echo -e "\n${BLUE}[2/5]${NC} Starting dbt, Airflow, Metabase..."
+echo -e "\n${BLUE}[2/7]${NC} Starting dbt, Airflow, Metabase..."
 docker compose up -d 2>&1 | grep -v "orphan containers"
 echo -e "${GREEN}  Started${NC}"
 
 # -----------------------------------------------------------------------------
-# 3. Airbyte (separate compose stack)
+# 3. dbt packages (Elementary + dependencies)
+# -----------------------------------------------------------------------------
+echo -e "\n${BLUE}[3/7]${NC} Ensuring dbt packages are installed..."
+if docker exec dbt-runner dbt deps 2>&1 | tail -1 | grep -q "Up to date"; then
+    echo -e "${GREEN}  Packages up to date${NC}"
+else
+    echo -e "${GREEN}  Packages installed${NC}"
+fi
+
+# -----------------------------------------------------------------------------
+# 4. Airbyte (separate compose stack)
 # -----------------------------------------------------------------------------
 # Ensure airbyte_user has write permissions on public schema
 # (seed data creates tables owned by postgres — Airbyte needs to overwrite them)
@@ -82,14 +93,14 @@ docker exec postgres psql -U postgres -d airbyte_raw -c "
     ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO airbyte_user;
 " 2>/dev/null || true
 
-echo -e "\n${BLUE}[3/5]${NC} Starting Airbyte (8 containers)..."
+echo -e "\n${BLUE}[4/7]${NC} Starting Airbyte (8 containers)..."
 docker compose -f docker-compose.airbyte.yaml up -d 2>&1 | grep -v "orphan containers"
 echo -e "${GREEN}  Started${NC}"
 
 # -----------------------------------------------------------------------------
 # 4. Wait for Airbyte API + configure
 # -----------------------------------------------------------------------------
-echo -e "\n${BLUE}[4/5]${NC} Waiting for Airbyte API..."
+echo -e "\n${BLUE}[5/7]${NC} Waiting for Airbyte API..."
 for i in $(seq 1 60); do
     response=$(curl -s -u airbyte:password http://localhost:8000/api/v1/health 2>/dev/null || true)
     if echo "$response" | grep -q '"available":true'; then
@@ -117,9 +128,34 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-# 5. Health summary
+# 5. dbt docs (generate + serve)
 # -----------------------------------------------------------------------------
-echo -e "\n${BLUE}[5/5]${NC} Verifying services..."
+DBT_DOCS_PORT="52419"
+DBT_DOCS_URL="http://localhost:${DBT_DOCS_PORT}"
+
+echo -e "\n${BLUE}[6/7]${NC} Starting dbt docs server..."
+if curl -s --max-time 2 "$DBT_DOCS_URL" > /dev/null 2>&1; then
+    echo -e "${GREEN}  Already running at ${DBT_DOCS_URL}${NC}"
+else
+    echo -n "  Generating docs..."
+    if docker exec dbt-runner dbt docs generate > /dev/null 2>&1; then
+        echo -e " ${GREEN}done${NC}"
+        docker exec -d dbt-runner dbt docs serve --port "${DBT_DOCS_PORT}" --host 0.0.0.0
+        sleep 2
+        if curl -s --max-time 3 "$DBT_DOCS_URL" > /dev/null 2>&1; then
+            echo -e "  ${GREEN}Serving at ${DBT_DOCS_URL}${NC}"
+        else
+            echo -e "  ${YELLOW}Started but may need a few more seconds${NC}"
+        fi
+    else
+        echo -e " ${YELLOW}failed — run 'dbt build' first to populate the catalog${NC}"
+    fi
+fi
+
+# -----------------------------------------------------------------------------
+# 6. Health summary
+# -----------------------------------------------------------------------------
+echo -e "\n${BLUE}[7/7]${NC} Verifying services..."
 echo ""
 
 check_service() {
@@ -148,6 +184,7 @@ echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━�
 echo -e "  Airflow   ${GREEN}http://localhost:8080${NC}    admin / admin"
 echo -e "  Airbyte   ${GREEN}http://localhost:8000${NC}    airbyte / password"
 echo -e "  Metabase  ${GREEN}http://localhost:54892${NC}   (wizard-set credentials)"
+echo -e "  dbt Docs  ${GREEN}http://localhost:52419${NC}   (after dbt docs serve)"
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
 

@@ -3,15 +3,32 @@
 {{ config(schema='gold') }}
 
 WITH user_purchases AS (
-    SELECT * FROM {{ ref('dim_users') }}
-),
-
-products AS (
-    SELECT * FROM {{ ref('dim_products') }}
+    SELECT
+        user_id,
+        full_name,
+        email,
+        occupation,
+        city,
+        state,
+        country_code,
+        age,
+        created_at,
+        total_purchases,
+        total_spent,
+        total_returns,
+        first_purchase_at,
+        last_purchase_at
+    FROM {{ ref('dim_users') }}
 ),
 
 purchases AS (
-    SELECT * FROM {{ ref('stg_purchases') }}
+    SELECT
+        user_id,
+        product_make,
+        product_model,
+        product_price,
+        purchased_at
+    FROM {{ ref('fct_purchases') }}
 ),
 
 -- Get last purchased product per user using Postgres-specific DISTINCT ON.
@@ -20,10 +37,9 @@ purchases AS (
 user_last_purchase AS (
     SELECT DISTINCT ON (p.user_id)
         p.user_id,
-        pr.make || ' ' || pr.model AS last_product,
-        pr.price AS last_product_price
+        p.product_make || ' ' || p.product_model AS last_product,
+        p.product_price AS last_product_price
     FROM purchases AS p
-    JOIN products AS pr ON p.product_id = pr.product_id
     ORDER BY p.user_id, p.purchased_at DESC
 )
 

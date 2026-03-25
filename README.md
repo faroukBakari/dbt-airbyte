@@ -21,6 +21,7 @@ A **Modern Data Stack** proof-of-concept demonstrating production-grade ELT with
 - **Interleaved execution** — `dbt build` runs models and tests in dependency order; a failing test blocks downstream propagation
 - **SQL quality gates** — SQLFluff linting enforced via pre-commit hooks and GitHub Actions CI
 - **CI/CD pipeline** — GitHub Actions with parallel SQL lint + dbt compile check on every push/PR
+- **Data observability** — Elementary captures test results and model metadata into persistent tables, with a live Metabase dashboard and HTML reports for quality trends
 - **Two setup modes**: live Airbyte ingestion or instant seed data for fast evaluation
 
 ---
@@ -716,6 +717,36 @@ docker exec dbt-runner dbt test --select test_type:data
 docker exec dbt-runner dbt test --select gold_user_purchases
 ```
 
+### Data Observability (Elementary)
+
+[Elementary](https://www.elementary-data.com/) captures test results, model run metadata, and anomaly metrics into persistent database tables in the `elementary` schema. This replaces ephemeral stdout output with historical quality trends.
+
+**What it provides:**
+- Test result history — see when tests started failing, not just that they fail now
+- Model run durations — track performance over time
+- **Live Metabase dashboard** — auto-refreshing observability dashboard with pass rates, execution trends, coverage, and failure drill-down (see [dashboard guide](docs/OBSERVABILITY-DASHBOARD.md))
+- HTML dashboard — single-file report for sharing quality status
+
+**Observability views** (created automatically by `setup.sh --seed`, or manually):
+
+```bash
+bash scripts/create_observability_views.sh
+```
+
+This creates 6 SQL views in the `elementary` schema that power the Metabase dashboard. Views are idempotent — safe to re-run.
+
+**Generating the HTML report** (from WSL host):
+
+```bash
+bash scripts/generate_elementary_report.sh
+```
+
+This uses `uvx` for zero-install execution. The report is written to `elementary-report/elementary_report.html`.
+
+**How it works:** Elementary's dbt package installs ~20 models into the `elementary` schema. On every `dbt build`, on-run-end hooks automatically capture metadata. No separate task or manual step needed.
+
+---
+
 ### Seed Data (--seed mode)
 
 When running with `./scripts/setup.sh --seed`, the pipeline uses deterministic test data:
@@ -858,7 +889,7 @@ This POC already implements several production-grade patterns (contracts, versio
 - **Incremental syncs** — switch from full_refresh to incremental + dedup for large datasets
 - **Secrets management** — replace hardcoded POC credentials with a vault (e.g., HashiCorp Vault, AWS Secrets Manager)
 - **CI/CD (full build)** — current CI validates compilation (`dbt parse`) and SQL quality (`sqlfluff lint`); add seed fixtures to enable `dbt build --select state:modified+` in CI (see [roadmap](docs/ROADMAP.md))
-- **Monitoring** — add dbt source freshness checks and Elementary observability dashboard (see [roadmap](docs/ROADMAP.md))
+- **Monitoring** — add dbt source freshness checks (see [roadmap](docs/ROADMAP.md)); Elementary observability already integrated
 - **Scaling** — swap PostgreSQL for a cloud warehouse (Snowflake, BigQuery, Redshift); Airbyte Cloud for managed connectors
 - **Multi-team governance** — add dbt groups and access control for team ownership boundaries
 
@@ -878,10 +909,11 @@ See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the full implementation roadmap.
 - SQLFluff linting (UPPER keywords, explicit aliases, spaced JSON operators)
 - Pre-commit hooks (SQLFluff lint/fix + YAML validation + whitespace/EOF)
 - GitHub Actions CI (2 parallel jobs: SQL lint + dbt compile check)
+- Elementary observability (persistent test results, model metadata, HTML dashboard)
 
 **Next up:**
 - **Source freshness** — verify raw data recency before transforms (Airbyte mode)
-- **Elementary** — dbt-native observability dashboard with test history and anomaly detection
+- ~~**Elementary**~~ — **DONE** — dbt-native observability with persistent test results and HTML dashboard
 - **Groups & access** — team ownership boundaries with cross-group `ref()` control
 - **CI seed fixtures** — add seed CSVs + source overrides to enable full `dbt build` in CI
 

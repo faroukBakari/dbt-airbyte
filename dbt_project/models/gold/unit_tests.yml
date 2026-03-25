@@ -12,15 +12,12 @@ unit_tests:
              country_code: "US", age: 30, created_at: "2024-01-01",
              total_purchases: 10, total_spent: 500.00, total_returns: 3,
              first_purchase_at: "2024-01-15", last_purchase_at: "2024-06-01"}
-      - input: ref('dim_products')
-        rows:
-          - {product_id: 1, make: "TestMake", model: "TestModel",
-             year: 2024, price: 50.00, created_at: "2024-01-01",
-             loaded_at: "2024-01-01", times_sold: 10, times_returned: 3}
-      - input: ref('stg_purchases')
+      - input: ref('fct_purchases')
         rows:
           - {purchase_id: 1, user_id: 1, product_id: 1,
-             purchased_at: "2024-06-01", returned_at: null}
+             product_make: "TestMake", product_model: "TestModel",
+             product_price: 50.00, purchased_at: "2024-06-01",
+             returned_at: null, is_returned: false}
     expect:
       rows:
         - {user_id: 1, return_rate_pct: 30.0}
@@ -38,15 +35,12 @@ unit_tests:
              country_code: "US", age: 30, created_at: "2024-01-01",
              total_purchases: 3, total_spent: 250.00, total_returns: 0,
              first_purchase_at: "2024-01-15", last_purchase_at: "2024-06-01"}
-      - input: ref('dim_products')
-        rows:
-          - {product_id: 1, make: "TestMake", model: "TestModel",
-             year: 2024, price: 83.33, created_at: "2024-01-01",
-             loaded_at: "2024-01-01", times_sold: 3, times_returned: 0}
-      - input: ref('stg_purchases')
+      - input: ref('fct_purchases')
         rows:
           - {purchase_id: 1, user_id: 1, product_id: 1,
-             purchased_at: "2024-06-01", returned_at: null}
+             product_make: "TestMake", product_model: "TestModel",
+             product_price: 83.33, purchased_at: "2024-06-01",
+             returned_at: null, is_returned: false}
     expect:
       rows:
         - {user_id: 1, avg_purchase_value: 83.33}
@@ -63,15 +57,12 @@ unit_tests:
              country_code: "US", age: 25, created_at: "2024-01-01",
              total_purchases: 5, total_spent: 200.00, total_returns: 0,
              first_purchase_at: "2024-02-01", last_purchase_at: "2024-05-01"}
-      - input: ref('dim_products')
-        rows:
-          - {product_id: 1, make: "TestMake", model: "TestModel",
-             year: 2024, price: 40.00, created_at: "2024-01-01",
-             loaded_at: "2024-01-01", times_sold: 5, times_returned: 0}
-      - input: ref('stg_purchases')
+      - input: ref('fct_purchases')
         rows:
           - {purchase_id: 1, user_id: 1, product_id: 1,
-             purchased_at: "2024-05-01", returned_at: null}
+             product_make: "TestMake", product_model: "TestModel",
+             product_price: 40.00, purchased_at: "2024-05-01",
+             returned_at: null, is_returned: false}
     expect:
       rows:
         - {user_id: 1, return_rate_pct: 0.0}
@@ -89,20 +80,16 @@ unit_tests:
              country_code: "US", age: 30, created_at: "2024-01-01",
              total_purchases: 2, total_spent: 300.00, total_returns: 0,
              first_purchase_at: "2024-01-15", last_purchase_at: "2024-06-01"}
-      - input: ref('dim_products')
-        rows:
-          - {product_id: 1, make: "OldMake", model: "OldModel",
-             year: 2023, price: 100.00, created_at: "2024-01-01",
-             loaded_at: "2024-01-01", times_sold: 1, times_returned: 0}
-          - {product_id: 2, make: "NewMake", model: "NewModel",
-             year: 2024, price: 200.00, created_at: "2024-01-01",
-             loaded_at: "2024-01-01", times_sold: 1, times_returned: 0}
-      - input: ref('stg_purchases')
+      - input: ref('fct_purchases')
         rows:
           - {purchase_id: 1, user_id: 1, product_id: 1,
-             purchased_at: "2024-01-15", returned_at: null}
+             product_make: "OldMake", product_model: "OldModel",
+             product_price: 100.00, purchased_at: "2024-01-15",
+             returned_at: null, is_returned: false}
           - {purchase_id: 2, user_id: 1, product_id: 2,
-             purchased_at: "2024-06-01", returned_at: null}
+             product_make: "NewMake", product_model: "NewModel",
+             product_price: 200.00, purchased_at: "2024-06-01",
+             returned_at: null, is_returned: false}
     expect:
       rows:
         - {user_id: 1, last_purchased_product: "NewMake NewModel",

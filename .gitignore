@@ -22,3 +22,7 @@ profiles/.user.yml
 .DS_Store
 
 .cursor/
+
+# Elementary
+elementary-report/
+edr_target/
