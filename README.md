@@ -457,10 +457,34 @@ docker ps --format "table {{.Names}}\t{{.Status}}" | grep -E "airbyte|airflow|db
 
 ### Step 3: Access UIs
 
-- **Airbyte**: http://localhost:8000 → Verify connection is created
-- **Airflow**: http://localhost:8080 → Check `elt_pipeline` DAG exists
-- **Metabase**: http://localhost:54892 → Complete setup wizard (auto-started, connects to `gold` schema)
-- **dbt Docs**: http://localhost:52419 → Browse model lineage and documentation (`--seed` mode)
+| Service | URL | Credentials |
+|---------|-----|-------------|
+| **Airbyte** | http://localhost:8000 | `airbyte` / `password` |
+| **Airflow** | http://localhost:8080 | `admin` / `admin` |
+| **Metabase** | http://localhost:54892 | *(set during setup wizard)* |
+| **PostgreSQL** | `localhost:5432` | `dbt_user` / `dbt_password` |
+
+### Restarting the POC (after reboot / containers stopped)
+
+```bash
+# One command — starts all containers, configures Airbyte, opens web consoles
+./start.sh
+
+# Without opening browsers
+./start.sh --no-browser
+```
+
+This starts PostgreSQL, dbt, Airflow, Metabase, and the full Airbyte stack (8 containers), configures the Faker → PostgreSQL connection (idempotent), and opens all web consoles in your browser.
+
+For manual startup, the individual steps are:
+
+```bash
+docker start postgres
+docker compose up -d
+docker compose -f docker-compose.airbyte.yaml up -d
+python3 scripts/configure_airbyte.py
+docker exec dbt-runner dbt build
+```
 
 ---
 
